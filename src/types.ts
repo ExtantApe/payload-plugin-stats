@@ -87,10 +87,10 @@ export interface ResolvedStatsOptions {
 export interface StatsCount {
   value: null | number
   /**
-   * `small`: a zero, worded as "fewer than". `protected`: hidden along with its table, because some count in that
-   * table is from 1 to minimum - 1, or could be worked out to be. A hidden count says nothing about its own size.
+   * `protected`: hidden along with its table, because some count in that table is from 1 to minimum - 1, or could be
+   * worked out to be. A hidden count says nothing about its own size. A zero in a table that shows is shown as 0.
    */
-  hidden?: 'protected' | 'small'
+  hidden?: 'protected'
   text: string
 }
 

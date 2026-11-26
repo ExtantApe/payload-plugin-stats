@@ -2,7 +2,7 @@
   "name": "@extantape/payload-plugin-stats",
   "version": "0.0.0",
   "private": true,
-  "description": "Stats for Payload: admin-only counts of users by role, position and other fields, with no names, emails or IDs, and small groups hidden.",
+  "description": "Stats for Payload: counts of users by role, position and other fields, shown to whoever your access function allows, with no names, emails or IDs, and small groups hidden.",
   "keywords": ["payload", "payload-plugin", "payloadcms", "analytics", "stats", "privacy", "admin-dashboard"],
   "license": "MIT",
   "homepage": "https://github.com/ExtantApe/payload-plugin-stats#readme",

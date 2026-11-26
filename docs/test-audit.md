@@ -2,6 +2,25 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-25: after the second review
+
+What changed, and the tests that hold it:
+
+- **Hidden fields, fields under a hidden group and fields with an afterRead hook are refused:** `test/config.test.ts`, seven refusals (a hidden select, a hidden group on the path, an afterRead hook on the field and on an array on the path, a hidden title field, a hidden band field, a band field with an afterRead hook). A field whose hooks do not touch reading is accepted.
+- **Two bands on one field are refused:** `config.test.ts`, with different thresholds and with the same. `suppress.test.ts` shows why: the reader finds the leak on that shape, with the review's numbers.
+- **A zero reads 0:** `suppress.test.ts` "shows a zero in a table that shows as 0", and `stats.test.ts` against the real database. No response holds "fewer than".
+- **The readers are independent of the layout:** `test/exhaustive.ts` and `test/attacker.ts` take a shape as kinds of user, the counts those users give, and the groups to protect. The page comes from `present`, the one function everything published passes through. Eight shapes pass at minimums 2, 3 and 5: the six from before, a many-value field with two values, and two fields shown together. For one-value fields, ladders and bands, the protected groups are every group made of a table's parts. For many-value fields they are each row, each roll-up, any, none, and the users with some value (or some value of a roll-up) who lack one.
+- **Accepted limits are pinned:** the overlap in a two-value field is recoverable (the review's 10, 8, 2 and 10), it and its sum with "none" are the only groups of that field a page narrows, and a group spanning two fields can be narrowed.
+
+Mutation checks, run by hand in this pass and then restored: with the roll-up member remainders taken out of `layout`, 4 tests fail (both readers, on the many-value shape with a roll-up). With the "any but this value" remainders taken out, 10 fail. Kept in the suite: the three leaky engines, the "fewer than" page, and two bands on one field.
+
+Gaps skipped, and why:
+
+- The new refusals against a booted Payload. They run in `resolveOptions` before Payload starts, on the same config objects, so the resolver tests are the real path. The repro site from the review was not rebuilt.
+- A write landing between two counts. It needs a controlled race against the database; stated as a limit in the README and as not tested in the CHANGELOG.
+- The arithmetic reader on every table at once. It works on kinds of user, and all four tables together make 512 kinds. Tables share only the public total, and the two-table shapes cover that.
+- The readers at minimum 2 say little about exact sizes: the only small size is 1, so there is nothing to narrow to.
+
 ## 2026-11-25: first version, after the Head of Tools review
 
 Promises, from the README and `docs/decisions.md`, and the tests that hold them:

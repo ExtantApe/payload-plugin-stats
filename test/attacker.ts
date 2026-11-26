@@ -1,93 +1,95 @@
-import type { Line } from '../src/report.js'
-import type { Cell, State } from '../src/suppress.js'
+import { present, type RawCounts, type Shown } from '../src/report.js'
+import type { Shape } from './exhaustive.js'
 
 /**
- * A reader with unlimited patience. Given only what a report publishes (exact numbers, "fewer than" labels, "hidden"
- * labels) and how the report is built (the lines), it tries every whole-number filling of the unknown cells and keeps
- * the ones where all the arithmetic works. Returns, for each cell, every value it could still have.
- *
- * It shares no code with the hiding engine, and it does not know the engine's rule: it only does arithmetic. The
- * exhaustive check in exhaustive.ts covers a reader who knows the rule too. `cap` is the largest value any count can
- * have, which is the public total. Returns null when there are too many fillings to try within the budget.
+ * A reader with unlimited patience who only does arithmetic. It is given a page (the numbers a report shows, and
+ * which ones are hidden) and what each number counts, in terms of made-up kinds of user. It does not know the hiding
+ * rule and reads nothing of how the plugin lays a report out. For each protected group that is small on the true
+ * site, it asks whether some site fits every shown number with 1 user in the group, with 2, and so on. A size with no
+ * fitting site has been ruled out by the page.
  */
-export function possibleValues(cells: Cell[], lines: Line[], states: Map<string, State>, minimum: number, cap: number, budget = 2_000_000): Map<string, Set<number>> | null {
-  const explicit = cells.filter((c) => !c.implicit)
-  const unknown = explicit.filter((c) => states.get(c.id) !== 'exact')
-  const order = new Map(unknown.map((c, i) => [c.id, i]))
-  const range = (c: Cell): [number, number] => (states.get(c.id) === 'small' ? [0, Math.min(minimum - 1, cap)] : [0, cap])
 
-  // Each implicit cell is defined by one sum line: parent = the other children + it.
-  const implicit = new Map(cells.filter((c) => c.implicit).map((c) => [c.id, lines.find((l) => l.kind === 'sum' && l.children.includes(c.id))!]))
+/** The true numbers behind a report, in a fixed order. "None" is the total less "any". */
+export function numbers(raw: RawCounts): number[] {
+  return [
+    raw.total,
+    raw.new1,
+    raw.new7,
+    raw.new30,
+    ...raw.fields.flatMap((f) => (f.unavailable ? [] : [f.any, raw.total - f.any, ...f.groups.map((g) => g.count), ...f.values.map((v) => v.count)])),
+    ...raw.bands.flatMap((b) => (b.unavailable ? [] : b.counts)),
+  ]
+}
 
-  const value = new Map<string, number>()
-  for (const c of explicit) if (states.get(c.id) === 'exact') value.set(c.id, c.value)
-  const read = (id: string): number => {
-    const line = implicit.get(id)
-    return line ? read(line.parent) - line.children.filter((k) => k !== id).reduce((s, k) => s + read(k), 0) : value.get(id)!
-  }
-  // The depth at which every number a line needs has been filled in, so a wrong branch is dropped early.
-  const needs = (id: string): number => {
-    const line = implicit.get(id)
-    return line ? Math.max(needs(line.parent), ...line.children.filter((k) => k !== id).map(needs)) : (order.get(id) ?? -1)
-  }
-  const holds = (line: Line) => {
-    const members = [line.parent, ...line.children].map(read)
-    if (members.some((v) => v < 0)) return false
-    const sum = members.slice(1).reduce((s, v) => s + v, 0)
-    return line.kind === 'sum' ? members[0] === sum : members[0]! <= sum
-  }
-  const readyAt = lines.map((l) => Math.max(...[l.parent, ...l.children].map(needs)))
-  if (lines.some((l, i) => readyAt[i] === -1 && !holds(l))) return new Map(cells.map((c) => [c.id, new Set<number>()]))
+/** The same numbers as a page shows them, in the same order: null when hidden. */
+export function published(shown: Shown): (null | number)[] {
+  const t = shown.totals
+  return [t.all, t.newYesterday, t.new7Days, t.new30Days, ...shown.fields.flatMap((f) => (f ? [f.any, f.none, ...f.groups, ...f.values] : [])), ...shown.bands.flatMap((b) => b ?? [])].map((c) => c.value)
+}
 
-  const seen = new Map(cells.map((c) => [c.id, new Set<number>()]))
-  let visited = 0
-  const fill = (i: number): boolean => {
-    if (i === unknown.length) {
-      for (const c of cells) seen.get(c.id)!.add(read(c.id))
-      return true
+interface Fact {
+  mask: number
+  value: number
+}
+
+/** Is there a site, some number of users of each kind, where every fact holds? Null when the budget runs out. */
+function fits(kinds: number, total: number, facts: Fact[], budget: { left: number }, down = false): boolean | null {
+  const last = facts.map((f) => 31 - Math.clz32(f.mask))
+  const sums = facts.map(() => 0)
+  const place = (k: number, left: number): boolean | null => {
+    if (k === kinds) return left === 0
+    const first = k === kinds - 1 ? left : 0
+    for (let step = 0; step <= left - first; step++) {
+      const n = down ? left - step : first + step
+      if (--budget.left < 0) return null
+      let ok = true
+      for (const [i, f] of facts.entries()) {
+        if (!(f.mask & (1 << k))) continue
+        const s = sums[i]! + n
+        // Over the number, short of it with no kind left to add, or short by more than the users left.
+        if (s > f.value || (last[i] === k && s !== f.value) || f.value - s > left - n) ok = false
+      }
+      if (!ok) continue
+      for (const [i, f] of facts.entries()) if (f.mask & (1 << k)) sums[i]! += n
+      const found = place(k + 1, left - n)
+      for (const [i, f] of facts.entries()) if (f.mask & (1 << k)) sums[i]! -= n
+      if (found !== false) return found
     }
-    const [lo, hi] = range(unknown[i]!)
-    for (let v = lo; v <= hi; v++) {
-      if (++visited > budget) return false
-      value.set(unknown[i]!.id, v)
-      if (lines.every((l, k) => readyAt[k] !== i || holds(l)) && !fill(i + 1)) return false
-    }
-    return true
+    return false
   }
-  return fill(0) ? seen : null
+  return place(0, total)
 }
 
 /**
- * Sensitive cells the reader can narrow: some value from 1 to minimum - 1 that fits under the public total has been
- * ruled out. The report is split into parts that share no unknown number, so each part can be tried on its own.
+ * The protected groups the reader can narrow on the site with `people[k]` users of kind k. `page` is what that site
+ * shows; by default, what the plugin publishes. Null when some question took more than `tries` steps to settle.
  */
-export function narrowed(cells: Cell[], lines: Line[], states: Map<string, State>, minimum: number, total: number, budget?: number): null | string[] {
-  const unknown = (id: string) => states.get(id) !== 'exact'
-  const part = new Map<string, string>()
-  const find = (id: string): string => {
-    const up = part.get(id)
-    if (up === undefined || up === id) return id
-    const root = find(up)
-    part.set(id, root)
-    return root
+export function narrowed(shape: Shape, people: number[], minimum: number, page?: (null | number)[], tries = 500_000): null | string[] {
+  const raw = shape.counts(people)
+  const truth = numbers(raw)
+  const shown = page ?? published(present(raw, minimum))
+  const total = people.reduce((s, n) => s + n, 0)
+  // What each number counts: the kinds whose users it goes up by one for.
+  const one = Array.from({ length: shape.kinds }, (_, k) => numbers(shape.counts(people.map((_, j) => (j === k ? 1 : 0)))))
+  const masks = truth.map((_, i) => one.reduce((m, row, k) => m | (row[i]! << k), 0))
+  for (const [i, t] of truth.entries()) {
+    if (one.some((row) => row[i]! !== 0 && row[i]! !== 1) || people.reduce((s, n, k) => s + n * one[k]![i]!, 0) !== t) throw new Error(`number ${i} is not a plain count of kinds`)
+    if (shown[i] !== null && shown[i] !== t) throw new Error(`number ${i} is shown as ${shown[i]} and is really ${t}`)
   }
-  for (const line of lines) {
-    const ids = [line.parent, ...line.children].filter(unknown)
-    for (const id of ids) part.set(find(id), find(ids[0]!))
-  }
+  const facts = shown.flatMap((value, i) => (value === null ? [] : [{ mask: masks[i]!, value }]))
   const out: string[] = []
-  for (const root of new Set(cells.filter((c) => unknown(c.id)).map((c) => find(c.id)))) {
-    const mine = lines.filter((l) => [l.parent, ...l.children].some((id) => unknown(id) && find(id) === root))
-    const ids = new Set(mine.flatMap((l) => [l.parent, ...l.children]))
-    const seen = possibleValues(cells.filter((c) => ids.has(c.id)), mine, states, minimum, total, budget)
-    if (!seen) return null
-    for (const c of cells) {
-      if (!ids.has(c.id) || !unknown(c.id) || c.value < 1 || c.value >= minimum) continue
-      for (let v = 1; v < minimum && v <= total; v++)
-        if (!seen.get(c.id)!.has(v)) {
-          out.push(`${c.id} (true ${c.value}) cannot be ${v}`)
-          break
-        }
+  for (const s of shape.secrets) {
+    const size = people.reduce((sum, n, k) => sum + (s.mask & (1 << k) ? n : 0), 0)
+    if (size < 1 || size >= minimum) continue
+    for (let v = 1; v < minimum && v <= total; v++) {
+      // Two searches, one filling the early kinds first and one the late kinds: a fit one misses the other often finds.
+      const asked = [...facts, { mask: s.mask, value: v }]
+      const found = fits(shape.kinds, total, asked, { left: tries }) ?? fits(shape.kinds, total, asked, { left: tries }, true)
+      if (found === null) return null
+      if (!found) {
+        out.push(`${s.name} (really ${size}) cannot be ${v}`)
+        break
+      }
     }
   }
   return out

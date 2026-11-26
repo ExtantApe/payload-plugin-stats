@@ -25,6 +25,13 @@ const users = (extra: Partial<CollectionConfig> = {}): CollectionConfig => ({
     { name: 'plan', type: 'select', options: ['free', 'paid'], access: { update: () => false } },
     { name: 'secret', type: 'group', access: { read: () => false }, fields: [{ name: 'level', type: 'select', options: ['one', 'two'] }] },
     { name: 'memberships', type: 'array', access: { read: () => false }, fields: [{ name: 'role', type: 'select', options: ['owner', 'viewer'] }] },
+    // Fields the site keeps from readers in other ways: hidden, under a hidden group, or stripped by an afterRead hook.
+    { name: 'isMinor', type: 'select', options: ['yes', 'no'], hidden: true },
+    { name: 'guardian', type: 'group', hidden: true, fields: [{ name: 'consent', type: 'select', options: ['given', 'pending'] }] },
+    { name: 'school', type: 'select', options: ['primary', 'secondary'], hooks: { afterRead: [() => undefined] } },
+    { name: 'household', type: 'array', hooks: { afterRead: [() => []] }, fields: [{ name: 'size', type: 'select', options: ['small', 'large'] }] },
+    { name: 'region', type: 'select', options: ['north', 'south'], hooks: { afterRead: [], beforeChange: [({ value }) => value] } },
+    { name: 'crew', type: 'relationship', relationTo: 'crews' },
     { name: 'team', type: 'relationship', relationTo: 'teams' },
     { name: 'tenants', type: 'array', fields: [{ type: 'row', fields: [{ name: 'roles', type: 'select', options: ['owner', 'viewer'] }] }] },
     { type: 'tabs', tabs: [{ label: 'More', fields: [{ name: 'details', type: 'group', fields: [{ name: 'level', type: 'select', options: ['one', 'two'] }] }] }] },
@@ -39,6 +46,7 @@ const config = (u = users()): Config =>
       // One document per person, titled by their name, and not an auth collection.
       { slug: 'profiles', admin: { useAsTitle: 'fullName' }, fields: [{ name: 'fullName', type: 'text' }] },
       { slug: 'teams', admin: { useAsTitle: 'name' }, fields: [{ name: 'name', type: 'text', access: { read: () => false } }] },
+      { slug: 'crews', admin: { useAsTitle: 'name' }, fields: [{ name: 'name', type: 'text', hidden: true }] },
       { slug: 'members', auth: true, fields: [] },
       {
         slug: 'posts',
@@ -47,6 +55,8 @@ const config = (u = users()): Config =>
           { name: 'carers', type: 'relationship', relationTo: 'users', hasMany: true },
           { name: 'home', type: 'relationship', relationTo: 'positions' },
           { name: 'editor', type: 'relationship', relationTo: 'users', access: { read: () => false } },
+          { name: 'ghost', type: 'relationship', relationTo: 'users', hidden: true },
+          { name: 'reader', type: 'relationship', relationTo: 'users', hooks: { afterRead: [() => null] } },
           { name: 'visits', type: 'array', fields: [{ name: 'by', type: 'relationship', relationTo: 'users' }] },
         ],
       },
@@ -82,6 +92,10 @@ describe('options', () => {
 
   it('counts a field whose only access rule is not about reading', () => {
     expect(resolve({ fields: ['plan'] }).fields[0]).toMatchObject({ path: 'plan', kind: 'options' })
+  })
+
+  it('counts a field whose hooks do not touch reading', () => {
+    expect(resolve({ fields: ['region'] }).fields[0]).toMatchObject({ path: 'region', kind: 'options' })
   })
 
   it('never uses an ID as a row label', () => {
@@ -130,6 +144,15 @@ describe('options', () => {
     ['a field inside an array with read access', () => resolve({ fields: ['memberships.role'] }), /"memberships" has its own read access/],
     ['a relationship whose title field has read access', () => resolve({ categories: ['teams'], fields: ['team'] }), /"teams.name" has its own read access/],
     ['a band field with read access', () => resolve({ bands: [{ collection: 'posts', field: 'editor' }] }), /"editor" has its own read access/],
+    ['a hidden field (the review found an isMinor field counted as yes 6, no 24)', () => resolve({ fields: ['isMinor'] }), /"isMinor" is hidden \(hidden: true\)\. A count would show what that hides/],
+    ['a field inside a hidden group', () => resolve({ fields: ['guardian.consent'] }), /"guardian" is hidden/],
+    ['a field with an afterRead hook', () => resolve({ fields: ['school'] }), /"school" has an afterRead hook/],
+    ['a field inside an array with an afterRead hook', () => resolve({ fields: ['household.size'] }), /"household" has an afterRead hook/],
+    ['a relationship whose title field is hidden', () => resolve({ categories: ['crews'], fields: ['crew'] }), /"crews.name" is hidden/],
+    ['a hidden band field', () => resolve({ bands: [{ collection: 'posts', field: 'ghost' }] }), /"ghost" is hidden/],
+    ['a band field with an afterRead hook', () => resolve({ bands: [{ collection: 'posts', field: 'reader' }] }), /"reader" has an afterRead hook/],
+    ['two bands on the same field, whose difference would show a small group', () => resolve({ bands: [{ collection: 'posts', field: 'owner', thresholds: [0, 2] }, { collection: 'posts', field: 'owner', thresholds: [1, 2] }] }), /band "posts.owner" is listed twice/],
+    ['the same band twice, thresholds and all', () => resolve({ bands: [{ collection: 'posts', field: 'owner' }, { collection: 'posts', field: 'owner' }] }), /listed twice/],
     ['a path through a plain field', () => resolve({ fields: ['kind.x'] }), /must be a group or an array/],
     ['a roll-up naming an unknown value', () => resolve({ fields: [{ path: 'roles', groups: [{ label: 'Staff', values: ['boss'] }] }] }), /not an option/],
     ['a roll-up on a relationship', () => resolve({ categories: ['positions'], fields: [{ path: 'position', groups: [{ label: 'x', values: [] }] }] }), /groups are for select/],

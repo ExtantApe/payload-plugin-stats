@@ -63,7 +63,7 @@ export function HidingNote({ report }: { report: StatsReport }) {
   return (
     <p style={{ ...s.quiet, maxWidth: '40rem' }}>
       Counts only: no names, emails or IDs. No count from 1 to {report.minimum - 1} is shown. When a table holds one, or one could be worked out by subtracting, its counts show as hidden, and a list of
-      steps shows as hidden from that step down. A zero shows as fewer than {report.minimum}. New-account counts cover whole days that have ended, in UTC.
+      steps shows as hidden from that step down. New-account counts cover whole days that have ended, in UTC.
     </p>
   )
 }

@@ -1,8 +1,8 @@
 # payload-plugin-stats
 
-Stats for Payload: admin-only counts of users by role, position and other fields, with no names, emails or IDs, and small groups hidden.
+Stats for Payload: counts of users by role, position and other fields, shown to whoever your access function allows, with no names, emails or IDs, and small groups hidden.
 
-> **Status: first version, unreleased.** 126 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
+> **Status: first version, unreleased.** 149 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
 
 ## What it does
 
@@ -11,7 +11,7 @@ Stats for Payload: admin-only counts of users by role, position and other fields
 - Counts how many users hold more than N documents in another collection, at the thresholds you choose. For example: users with more than 1, 5, 10, 25 and 50 posts.
 - Shows the result to the people your `access` function allows, in three places: a card on the dashboard, an admin view at `/admin/stats`, and a JSON endpoint at `GET /api/stats`.
 
-A user with several values in a field is counted in each of them. An admin who also holds another role counts in both rows, so admin accounts can stay in the numbers.
+A user with several values in a field is counted in each of them. An admin who also holds another role counts in both rows, so admin accounts can stay in the numbers. For such a field the counts also show how many users hold two values at once; see the limits below.
 
 ## What it never does
 
@@ -21,7 +21,7 @@ A user with several values in a field is counted in each of them. An admin who a
 
 ## Small groups
 
-No count from 1 to 4 is ever shown (with the default minimum of 5). A zero shows as **fewer than 5**.
+No count from 1 to 4 is ever shown (with the default minimum of 5). A zero shows as **0**, because a zero is nobody.
 
 Hiding one number is often not enough. If 40 users split into 30, 7 and a hidden 3, anyone can subtract. Hiding a second number, picked by size, is not enough either: this code is public, so which number got picked tells a careful reader about the one it protects. So the plugin hides by table. What it hides depends on how the report is laid out and never on which numbers are large:
 
@@ -35,7 +35,12 @@ A hidden count says nothing about its own size. It may be small or large.
 
 Limits, stated plainly:
 
-- A reader can tell that a count shown as fewer than 5 is zero, and can sometimes work out that a hidden count is zero or is at least 1. They cannot narrow a count from 1 to 4 any further than the total itself allows. On a site with 3 users, every count is 3 or less.
+- A reader can sometimes work out that a hidden count is zero, or that it is at least 1.
+- **A field where a user can hold several values shows how many users hold two of them at once.** Add two rows and subtract "any of these", or a roll-up of those two values, and what is left is the users who hold both. With 12 admins, 10 editors and 20 users holding either role, 2 hold both. That number can be from 1 to 4, and the plugin does not hide it. This is by the owner's choice: how many people hold more than one role is fine to show. It applies to `hasMany` fields and to fields inside arrays. If that overlap is sensitive on your site, leave the field out. Every other group in such a field is still protected: each row, each roll-up, and the users with some value who lack one particular value.
+- **The total is the whole users collection**, counted past access control, and it is always shown. Your `access` function must let in only people who are allowed to know that number. This matters most on a site with several tenants, where a tenant's admin may see only their own users in the admin panel. Every other count is taken the same way, across all users.
+- **Collection-level read access is not applied** to the collections named in `categories` or in `bands`. Category titles are read, and documents are counted, past those rules. Field-level rules are different: a field kept from readers is refused, as listed below.
+- **Two tables side by side can narrow a group that spans both.** Each table is protected on its own. With 8 users, 5 of them editors and 5 of them in one position, at least 2 editors hold that position. The plugin does not check groups made by combining two fields, a field with a band, or either with the new-account counts.
+- **The counts are not one snapshot.** Each number is its own database query. If an account changes while a report is being built, the numbers can come from slightly different moments. A table whose numbers no longer add up is hidden, but a change that still adds up goes through, and what a reader could learn from that has not been tested.
 - The check covers one report. **Someone who saves reports over time can see single changes.** The total moves by one when one account is added or removed. A row, a band or a new-account count that is showing moves by one the same way. A table that was showing and is now hidden, or the other way round, says a count in it crossed the minimum. New-account counts use whole UTC days that have ended, so they change once a day.
 - A report on a site with many small groups will be mostly hidden. Roll-ups do not rescue a field with a small row. Lowering `minimum` shows more, and it cannot go below 2.
 
@@ -56,7 +61,7 @@ export default buildConfig({
   // ...
   plugins: [
     stats({
-      // Required. Who may see the stats. Name the role yourself.
+      // Required. Who may see the stats. The whole check is yours: collection, role, tenant.
       access: ({ req }) => req.user?.collection === 'users' && req.user.roles?.includes('admin') === true,
       // Collections whose titles are categories, never people.
       categories: ['positions'],
@@ -82,13 +87,15 @@ Then run `payload generate:importmap`, so the admin can find the card and the vi
 | `categories` | `[]` | Collection slugs whose document titles are categories, such as `['positions']`. A relationship field can be counted only when it points at one of these. |
 | `minimum` | `5` | Counts from 1 to one under this never show. A whole number, 2 or more. |
 | `fields` | `[]` | Fields on the users collection to count by. A path, or `{ path, label, groups, maxValues }`. |
-| `bands` | `[]` | `{ collection, field, thresholds, label }`: users with more than N documents in `collection`, where `field` is a relationship to the users collection. |
+| `bands` | `[]` | `{ collection, field, thresholds, label }`: users with more than N documents in `collection`, where `field` is a relationship to the users collection. One band per field. |
 | `path` | `'/stats'` | Path of the endpoint (under the API route) and of the view (under the admin route). |
 | `admin` | `{ card: true, view: true }` | Set either to `false` to leave it out. |
 
-**Access is a required function, and there is no default.** The plugin refuses to start without one, and it refuses anything that is not a function (`true`, `'yes'`, `1`, `{}`, `false`, `null`). It does not fall back to the users collection's `access.admin`: in Payload that rule decides who may open the admin panel, and on many sites editors can. Write the check for the people who should see the numbers. If the site has more than one auth collection, check `req.user.collection` too, as the example does. A signed-out request is always refused before your function runs.
+**Access is a required function, and there is no default.** The plugin refuses to start without one, and it refuses anything that is not a function (`true`, `'yes'`, `1`, `{}`, `false`, `null`). It does not fall back to the users collection's `access.admin`: in Payload that rule decides who may open the admin panel, and on many sites editors can. Write the check for the people who should see the numbers. If the site has more than one auth collection, check `req.user.collection` too, as the example does. 
 
-**Fields** can be `select`, `radio` or `relationship` fields, at the top level or inside groups, tabs, rows and arrays (`tenants.roles`). `hasMany` works. `groups` are roll-ups for select and radio fields: users holding any of the listed values.
+**The check of who someone is belongs to your `access` function.** The plugin itself only turns away signed-out requests, before your function runs. It does not look at roles, at which auth collection the user is from, or at tenants. A signed-in user from any auth collection reaches your function, and whoever it answers `true` for sees every count.
+
+**Fields** can be `select`, `radio` or `relationship` fields, at the top level or inside groups, tabs, rows and arrays (`tenants.roles`). `hasMany` works, with the overlap limit above. `groups` are roll-ups for select and radio fields: users holding any of the listed values.
 
 **A relationship field needs its collection listed in `categories`.** A relationship is broken down by the related document's title, up to `maxValues` documents (default 50), and every title shows as a row label even when its count is hidden. The titles are read past access control. A collection with one document per person, such as profiles titled by full name, would put names in the report, and only you know which collections are like that. So nothing is counted by relationship until you name the collection.
 
@@ -99,7 +106,8 @@ The plugin checks all of this when Payload starts and stops the boot on a mistak
 - a missing `access`, or one that is not a function;
 - a relationship field whose collection is not in `categories`;
 - a relationship that points at an auth collection, listed or not, because a breakdown by person is a list of people;
-- a counted field, a band field, or any group, array or tab on the path to one, that has its own `access.read`. A count would show what that rule hides. The same goes for the title field of a `categories` collection;
+- a counted field, a band field, or any group, array or tab on the path to one, that the site keeps from readers in one of three ways: its own `access.read`, `hidden: true`, or an `afterRead` hook, which can strip or change the value. A count would show what those hide. The same goes for the title field of a `categories` collection;
+- two bands on the same collection and field. One list of steps less the other would show a group neither list protects, so put all the thresholds in one band;
 - free-text fields, localized fields, relationships to several collections, and band fields inside arrays.
 
 Count only by fields whose values are categories. A select option or a related document's title appears in the report as a row label.
@@ -124,7 +132,7 @@ Count only by fields whose values are categories. A select option or a related d
       "label": "Roles",
       "multiple": true,
       "any": { "value": 40, "text": "40" },
-      "none": { "value": null, "hidden": "small", "text": "fewer than 5" },
+      "none": { "value": 0, "text": "0" },
       "groups": [{ "label": "Staff", "count": { "value": null, "hidden": "protected", "text": "hidden" } }],
       "values": [{ "label": "admin", "count": { "value": null, "hidden": "protected", "text": "hidden" } }]
     }
@@ -135,9 +143,9 @@ Count only by fields whose values are categories. A select option or a related d
 }
 ```
 
-A hidden count has `"value": null`. The real number is not in the response. `"hidden": "small"` is a zero. `"hidden": "protected"` is a count hidden with its table, and it may be any size.
+A hidden count has `"value": null`. The real number is not in the response. `"hidden": "protected"` is a count hidden with its table, and it may be any size, zero included.
 
-`buildReport(payload, optionsOf(payload.config))` gives the same report to server code. It does no access check, so call `allowed(options, req)` first.
+`buildReport(payload, optionsOf(payload.config))` gives the same report to server code. It does no access check at all, so call `allowed(options, req)` first.
 
 ## Not there yet
 

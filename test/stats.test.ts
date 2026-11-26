@@ -42,6 +42,7 @@ async function get(who: null | string, collection?: string) {
   const text = await res.text()
   return { status: res.status, text, body: JSON.parse(text) as StatsReport & { error?: string }, headers: res.headers }
 }
+const all0 = (r: StatsReport) => JSON.stringify(r)
 const rows = (list: { label: string; count: { text: string } }[]) => Object.fromEntries(list.map((r) => [r.label, r.count.text]))
 
 beforeAll(async () => {
@@ -141,12 +142,12 @@ describe('the numbers', () => {
       new30Days: { value: 20, text: '20' },
     })
     const [kind, roles, position, tenant] = r.fields
-    expect(kind).toMatchObject({ path: 'kind', multiple: false, any: { value: 40 }, none: { text: 'fewer than 2' } })
+    expect(kind).toMatchObject({ path: 'kind', multiple: false, any: { value: 40 }, none: { text: '0' } })
     expect(rows(kind!.values)).toEqual({ individual: '30', organization: '7', charity: '3' })
 
     // Admins are members too, and count as both: 36 members includes the 2 admins.
     expect(roles).toMatchObject({ label: 'Roles', multiple: true, any: { value: 36 }, none: { value: 4 } })
-    expect(rows(roles!.values)).toEqual({ admin: '2', member: '36', author: '12', reviewer: '3', moderator: 'fewer than 2' })
+    expect(rows(roles!.values)).toEqual({ admin: '2', member: '36', author: '12', reviewer: '3', moderator: '0' })
     expect(rows(roles!.groups)).toEqual({ Staff: '5' })
 
     expect(position).toMatchObject({ label: 'Positions', multiple: false, any: { value: 28 }, none: { value: 12 } })
@@ -195,12 +196,13 @@ describe('hiding small groups', () => {
     r = (await get(email(1))).body
   })
 
-  it('shows no count from 1 to 4, and words a zero as "fewer than 5"', () => {
+  it('shows no count from 1 to 4, and shows a zero as 0', () => {
     expect(r.minimum).toBe(5)
     // 2 joined yesterday.
     expect(r.totals.newYesterday).toEqual({ value: null, hidden: 'protected', text: 'hidden' })
     // Nobody is without a kind: a zero in a table that shows.
-    expect(r.fields[0]!.none).toEqual({ value: null, hidden: 'small', text: 'fewer than 5' })
+    expect(r.fields[0]!.none).toEqual({ value: 0, text: '0' })
+    expect(all0(r)).not.toContain('fewer than')
     const all = JSON.stringify(r)
     for (const n of [1, 2, 3, 4]) expect(all).not.toContain(`"value":${n},`)
   })
@@ -215,7 +217,7 @@ describe('hiding small groups', () => {
 
   it('hides a whole table when one count in it is small, so the pattern says nothing about which', () => {
     // Kind: 3 charities. Every kind row is hidden, the 30 and the 7 too, whatever their sizes.
-    expect(r.fields[0]).toMatchObject({ any: { value: 40 }, none: { text: 'fewer than 5' } })
+    expect(r.fields[0]).toMatchObject({ any: { value: 40 }, none: { text: '0' } })
     expect(rows(r.fields[0]!.values)).toEqual({ individual: 'hidden', organization: 'hidden', charity: 'hidden' })
     // Roles: 4 accounts hold no role, so the whole field is hidden, roll-up included.
     expect(r.fields[1]).toMatchObject({ any: { text: 'hidden' }, none: { text: 'hidden' } })
@@ -233,7 +235,7 @@ describe('hiding small groups', () => {
     const hidden: unknown[] = []
     JSON.parse(JSON.stringify(r), (_k, v) => (v && typeof v === 'object' && 'hidden' in v ? hidden.push(v) : 0, v))
     expect(hidden.length).toBeGreaterThan(8)
-    for (const h of hidden) expect(['{"value":null,"hidden":"small","text":"fewer than 5"}', '{"value":null,"hidden":"protected","text":"hidden"}']).toContain(JSON.stringify(h))
+    for (const h of hidden) expect(JSON.stringify(h)).toBe('{"value":null,"hidden":"protected","text":"hidden"}')
   })
 })
 

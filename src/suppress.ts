@@ -34,10 +34,9 @@ export interface Block {
 }
 
 /**
- * `exact`: shown. `small`: a zero in a block that shows, worded as "fewer than". `hidden`: in a hidden block; nothing
- * is said about its size.
+ * `exact`: shown, a zero included (a zero is nobody). `hidden`: in a hidden block; nothing is said about its size.
  */
-export type State = 'exact' | 'hidden' | 'small'
+export type State = 'exact' | 'hidden'
 
 /** Decides what each explicit cell may show. Returns a state per explicit cell id. */
 export function suppress(cells: Cell[], blocks: Block[], minimum: number): Map<string, State> {
@@ -66,7 +65,7 @@ export function suppress(cells: Cell[], blocks: Block[], minimum: number): Map<s
   for (const c of cells) {
     if (c.implicit) continue
     if (c.block === undefined) out.set(c.id, 'exact')
-    else out.set(c.id, !shows(c.block) ? 'hidden' : c.value === 0 ? 'small' : 'exact')
+    else out.set(c.id, shows(c.block) ? 'exact' : 'hidden')
   }
   return out
 }

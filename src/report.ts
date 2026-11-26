@@ -27,31 +27,57 @@ export async function buildReport(payload: Payload, opts: ResolvedStatsOptions):
     Promise.all(opts.bands.map((b) => countBand(payload, opts.users, b))),
   ])
 
-  const { cells, blocks } = layout({ total, new1, new7, new30, fields, bands })
-  const states = suppress(cells, blocks, opts.minimum)
-  const values = new Map(cells.map((c) => [c.id, c.value]))
-  const show = (id: string): StatsCount => publish(values.get(id)!, states.get(id)!, opts.minimum)
+  const shown = present({ total, new1, new7, new30, fields, bands }, opts.minimum)
 
   return {
     generatedAt: now.toISOString(),
     minimum: opts.minimum,
-    totals: { all: show('total'), newYesterday: show('new1'), new7Days: show('new7'), new30Days: show('new30') },
+    totals: shown.totals,
     fields: fields.map((f, i): StatsFieldReport => {
       const base = { path: opts.fields[i]!.path, label: opts.fields[i]!.label, multiple: f.multiple }
-      if (f.unavailable) return { ...base, unavailable: f.unavailable, groups: [], values: [] }
+      const counts = shown.fields[i]
+      if (f.unavailable || !counts) return { ...base, unavailable: f.unavailable ?? 'Not counted.', groups: [], values: [] }
       return {
         ...base,
-        any: show(`f${i}.any`),
-        none: show(`f${i}.none`),
-        groups: f.groups.map((g, k) => ({ label: g.label, count: show(`f${i}.g${k}`) })),
-        values: f.values.map((v, j) => ({ label: v.label, count: show(`f${i}.v${j}`) })),
+        any: counts.any,
+        none: counts.none,
+        groups: f.groups.map((g, k) => ({ label: g.label, count: counts.groups[k]! })),
+        values: f.values.map((v, j) => ({ label: v.label, count: counts.values[j]! })),
       }
     }),
     bands: bands.map((b, i): StatsBandReport => {
       const base = { collection: opts.bands[i]!.collection, field: opts.bands[i]!.field, label: opts.bands[i]!.label }
-      if (b.unavailable) return { ...base, unavailable: b.unavailable, rows: [] }
-      return { ...base, rows: opts.bands[i]!.thresholds.map((t, j) => ({ moreThan: t, count: show(`b${i}.t${j}`) })) }
+      const rows = shown.bands[i]
+      if (b.unavailable || !rows) return { ...base, unavailable: b.unavailable ?? 'Not counted.', rows: [] }
+      return { ...base, rows: opts.bands[i]!.thresholds.map((t, j) => ({ moreThan: t, count: rows[j]! })) }
     }),
+  }
+}
+
+/** Every number a report publishes, in the report's own order. A field or band that could not be counted is null. */
+export interface Shown {
+  totals: StatsReport['totals']
+  fields: (null | { any: StatsCount; none: StatsCount; groups: StatsCount[]; values: StatsCount[] })[]
+  bands: (null | StatsCount[])[]
+}
+
+export type Engine = (cells: Cell[], blocks: Block[], minimum: number) => Map<string, State>
+
+/**
+ * From the true counts to what may be shown. Pure: no Payload, no clock. Everything a reader ever sees of the counts
+ * comes out of this function, so the tests that play a reader call it and nothing beneath it.
+ */
+export function present(raw: RawCounts, minimum: number, engine: Engine = suppress): Shown {
+  const { cells, blocks } = layout(raw)
+  const states = engine(cells, blocks, minimum)
+  const values = new Map(cells.map((c) => [c.id, c.value]))
+  const show = (id: string): StatsCount => publish(values.get(id)!, states.get(id)!)
+  return {
+    totals: { all: show('total'), newYesterday: show('new1'), new7Days: show('new7'), new30Days: show('new30') },
+    fields: raw.fields.map((f, i) =>
+      f.unavailable ? null : { any: show(`f${i}.any`), none: show(`f${i}.none`), groups: f.groups.map((_, k) => show(`f${i}.g${k}`)), values: f.values.map((_, j) => show(`f${i}.v${j}`)) },
+    ),
+    bands: raw.bands.map((b, i) => (b.unavailable ? null : b.counts.map((_, j) => show(`b${i}.t${j}`)))),
   }
 }
 
@@ -80,18 +106,7 @@ export interface RawCounts {
 }
 
 /**
- * How the counts add up: a `sum` line says a parent count is exactly the sum of its children, a `cover` line says a
- * parent is at most the sum of its children (overlapping groups). The hiding engine does not read lines. They are
- * here so a test can play a reader who adds and subtracts.
- */
-export interface Line {
-  kind: 'cover' | 'sum'
-  parent: string
-  children: string[]
-}
-
-/**
- * Turns the raw counts into cells, the blocks they are hidden by, and the lines that tie them together.
+ * Turns the raw counts into cells and the blocks they are hidden by.
  * Cell ids: `total`, `new1`, `new7`, `new30`, `f<i>.any`, `f<i>.none`, `f<i>.v<j>`, `f<i>.g<k>`, `b<i>.t<j>`.
  *
  * The blocks depend only on the shape of the report (which fields, roll-ups and thresholds are configured), never on
@@ -102,16 +117,13 @@ export interface Line {
  *   hidden from there on;
  * - each field has a block for "any" and "none", and nested under it one block for every row and roll-up.
  */
-export function layout({ total, new1, new7, new30, fields, bands }: RawCounts): { blocks: Block[]; cells: Cell[]; lines: Line[] } {
+export function layout({ total, new1, new7, new30, fields, bands }: RawCounts): { blocks: Block[]; cells: Cell[] } {
   const cells: Cell[] = []
-  const lines: Line[] = []
   const blocks: Block[] = []
   const cell = (id: string, value: number, block?: string) => (cells.push({ id, value, ...(block ? { block } : {}) }), id)
   /** parent = child + a remainder nobody sees a row for, but anyone can subtract. Negative when the counts disagree. */
   const within = (parent: string, parentValue: number, child: string, childValue: number, block: string) => {
-    const rest = `${parent}-minus-${child}`
-    cells.push({ id: rest, value: parentValue - childValue, implicit: true, block })
-    lines.push({ kind: 'sum', parent, children: [child, rest] })
+    cells.push({ id: `${parent}-minus-${child}`, value: parentValue - childValue, implicit: true, block })
   }
   /** Each rung is inside the one before, and the first is inside the total. */
   const ladder = (ids: string[], values: number[]) =>
@@ -129,30 +141,20 @@ export function layout({ total, new1, new7, new30, fields, bands }: RawCounts): 
     const top = `f${i}.top`
     const rows = `f${i}.rows`
     const any = cell(`f${i}.any`, f.any, top)
-    const none = cell(`f${i}.none`, total - f.any, top)
-    lines.push({ kind: 'sum', parent: 'total', children: [any, none] })
+    cell(`f${i}.none`, total - f.any, top)
     const values = f.values.map((v, j) => cell(`f${i}.v${j}`, v.count, rows))
     const sum = (ids: number[]) => ids.reduce((s, j) => s + f.values[j]!.count, 0)
     // Overlapping rows must cover their parent, and rows that do not overlap must add up to it.
     let broken = f.multiple ? sum(f.values.map((_, j) => j)) < f.any : sum(f.values.map((_, j) => j)) !== f.any
-    if (f.multiple) {
-      // Rows overlap: each is inside "any", and together they cover it.
-      values.forEach((v, j) => within(any, f.any, v, f.values[j]!.count, rows))
-      if (values.length) lines.push({ kind: 'cover', parent: any, children: values })
-    } else lines.push({ kind: 'sum', parent: any, children: values })
+    // Rows overlap: each is inside "any", so the users with some value who lack this one can be subtracted out.
+    if (f.multiple) values.forEach((v, j) => within(any, f.any, v, f.values[j]!.count, rows))
     f.groups.forEach((g, k) => {
       const group = cell(`f${i}.g${k}`, g.count, rows)
-      const members = g.members.map((j) => values[j]!)
       within(any, f.any, group, g.count, rows)
       if (f.multiple) {
         g.members.forEach((j) => within(group, g.count, values[j]!, f.values[j]!.count, rows))
-        lines.push({ kind: 'cover', parent: group, children: members })
         if (sum(g.members) < g.count) broken = true
-      } else {
-        lines.push({ kind: 'sum', parent: group, children: members })
-        lines.push({ kind: 'sum', parent: `${any}-minus-${group}`, children: values.filter((v) => !members.includes(v)) })
-        if (sum(g.members) !== g.count) broken = true
-      }
+      } else if (sum(g.members) !== g.count) broken = true
     })
     blocks.push({ id: top }, { id: rows, parent: top, ...(broken ? { broken } : {}) })
   })
@@ -162,13 +164,12 @@ export function layout({ total, new1, new7, new30, fields, bands }: RawCounts): 
     ladder(b.counts.map((_, j) => `b${i}.t${j}`), b.counts)
   })
 
-  return { blocks, cells, lines }
+  return { blocks, cells }
 }
 
-export function publish(value: number, state: State, minimum: number): StatsCount {
+/** A zero in a table that shows is shown as 0: wording it "fewer than" could only ever have meant 0. */
+export function publish(value: number, state: State): StatsCount {
   if (state === 'exact') return { value, text: String(value) }
-  // Only a zero in a table that shows reads "fewer than". It says nothing about anyone.
-  if (state === 'small') return { value: null, hidden: 'small', text: `fewer than ${minimum}` }
   return { value: null, hidden: 'protected', text: 'hidden' }
 }
 

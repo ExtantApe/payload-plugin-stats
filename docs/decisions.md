@@ -33,3 +33,16 @@ Dated decisions for this repo, newest last.
   - **The plugin does not check which auth collection the user is from.** The site's `access` function does, and the README shows how.
   - **New-account windows are whole UTC days that have ended**, so they change once a day and today's sign-ups are in none of them.
   - **Count bands need MongoDB** for now; on another adapter the band says it is unavailable. Field counts use Payload's `count`.
+- **Head of Tools, 2026-11-25**, second review of the first pull request. Kept: one small row hides its whole field; what the public total alone rules out is not a leak; the extra refusals; the 403 text. Changed:
+  - **Fields the site keeps from readers are refused**, in three forms: their own read access (already), `hidden: true`, and an `afterRead` hook. The same for every group or array on the path, for band fields and for a category collection's title field. The review found a hidden `isMinor` select counted as yes 6, no 24.
+  - **One band per collection and field.** Two were accepted, and thresholds [0, 2] beside [1, 2] gave 6 - 5 = 1. Duplicates are refused at start-up.
+  - **A zero reads 0.** "Fewer than 5" only ever appeared for a zero, so it said nothing more and read worse. This replaces "zero counts as small" in the first rulings: a zero is still nobody and still hides nothing.
+  - **The reader tests no longer use the layout.** They are built from made-up kinds of user and the published page (`present`), so a protection taken out of the layout fails them. Checked by taking out each kind of many-value remainder.
+  - **The README states the limits**: the total is the whole users collection counted past access control, so `access` must only let in people allowed to know it; collection-level read access on category and band collections is not applied; two tables side by side can narrow a group spanning both; the counts are not one snapshot. The claim that a hidden count cannot be narrowed beyond what the total allows is gone.
+  - **The description says access is site-defined**, where it said admin-only.
+- **Owner, 2026-11-25** (Garfunkel chat, relayed by Garfunkel), on the review's finding that a many-value field shows how many users hold two values at once (admin 12 + editor 10 - any 20 = 2 hold both): "I'm fine with how many people have more than X roles". Asked how the plugin should handle it, he chose "Drop the fix entirely". So many-value fields are counted and hidden as before, the README states the overlap as a limit, and a test pins that the overlap is recoverable and that nothing else in the field is.
+- 2026-11-25 (builder's choices in carrying those out, open to review):
+  - **Any `afterRead` hook is refused**, since the plugin cannot tell one that strips a value from one that formats it.
+  - **Not refused:** `admin.hidden` and `admin.condition` (they hide a field in the admin form only, and the API still returns it), and collection-level `afterRead` hooks.
+  - **The counts stay separate queries.** One session or transaction for all of them needs a replica set on MongoDB and is not simple, so the README states it as a limit.
+  - **`"hidden": "small"` is gone from the JSON.** A count is a number or `"hidden": "protected"`.

@@ -21,16 +21,23 @@ function named(fields: Field[]): Field[] {
   })
 }
 
-/** A field with its own read rule hides its values from some readers. A count over it would show them anyway. */
-function refuseOwnReadAccess(field: Field, what: string, path: string, part: string): void {
-  const access = (field as { access?: { read?: unknown } }).access
-  if (access && access.read !== undefined && access.read !== null)
-    throw new Error(`stats: ${what} "${path}": "${part}" has its own read access. A count would show what that rule hides, so it is refused.`)
+/**
+ * Three ways a site keeps a field's values from readers: its own read rule, `hidden: true`, and an afterRead hook that
+ * can strip or change the value. A count reads past all three and would show what they hide, so each is refused.
+ */
+function refuseKeptFromReaders(field: Field, what: string, path: string, part: string): void {
+  const f = field as { access?: { read?: unknown }; hidden?: unknown; hooks?: { afterRead?: unknown[] } }
+  const refuse = (why: string) => {
+    throw new Error(`stats: ${what} "${path}": "${part}" ${why}. A count would show what that hides, so it is refused.`)
+  }
+  if (f.access && f.access.read !== undefined && f.access.read !== null) refuse('has its own read access')
+  if (f.hidden === true) refuse('is hidden (hidden: true)')
+  if (f.hooks?.afterRead?.length) refuse('has an afterRead hook, which can strip or change its value for readers')
 }
 
 /**
  * Walks a dot path to its field. Says whether an array or hasMany on the way lets one user hold several values.
- * Refuses the field, and every field on the way to it, when it has its own read access.
+ * Refuses the field, and every field on the way to it, when the site keeps it from readers.
  */
 function walk(collection: CollectionConfig, path: string, what: string): { field: Field; inArray: boolean; multiple: boolean } {
   let fields = named(collection.fields)
@@ -40,7 +47,7 @@ function walk(collection: CollectionConfig, path: string, what: string): { field
     const field = fields.find((f) => 'name' in f && f.name === part)
     if (!field) throw new Error(`stats: ${what} "${path}": no field "${part}" on "${collection.slug}".`)
     if ('localized' in field && field.localized) throw new Error(`stats: ${what} "${path}": localized fields are not supported.`)
-    refuseOwnReadAccess(field, what, path, part)
+    refuseKeptFromReaders(field, what, path, part)
     if (i === parts.length - 1) return { field, inArray: multiple, multiple: multiple || ('hasMany' in field && field.hasMany === true) }
     if (field.type === 'array') multiple = true
     else if (field.type !== 'group') throw new Error(`stats: ${what} "${path}": "${part}" must be a group or an array.`)
@@ -71,11 +78,11 @@ function resolveField(config: Config, users: CollectionConfig, categories: strin
     if (!categories.includes(related.slug))
       throw new Error(`stats: field "${option.path}" points at "${related.slug}". Its titles would show as row labels, so list "${related.slug}" in the categories option if they are categories and never people.`)
     if (base.groups.length) throw new Error(`stats: field "${option.path}": groups are for select and radio fields.`)
-    // The title is read past access control, so a title field with its own read rule is refused. An ID is never a label.
+    // The title is read past access control, so a title field the site keeps from readers is refused. An ID is never a label.
     const useAsTitle = related.admin?.useAsTitle
     const titleField = useAsTitle && useAsTitle !== 'id' ? useAsTitle : undefined
     const title = titleField ? named(related.fields).find((f) => 'name' in f && f.name === titleField) : undefined
-    if (title) refuseOwnReadAccess(title, 'field', option.path, `${related.slug}.${titleField}`)
+    if (title) refuseKeptFromReaders(title, 'field', option.path, `${related.slug}.${titleField}`)
     return { ...base, kind: 'relationship', options: [], relationTo: related.slug, titleField }
   }
   throw new Error(`stats: field "${option.path}" is a ${field.type} field; use a select, radio or relationship field.`)
@@ -120,12 +127,18 @@ export function resolveOptions(config: Config, options: StatsOptions): ResolvedS
   const fields = (options.fields ?? []).map((f) => resolveField(config, users, categories, f))
   const paths = fields.map((f) => f.path)
   if (new Set(paths).size !== paths.length) throw new Error('stats: a field path is listed twice.')
+  const bands = (options.bands ?? []).map((b) => resolveBand(config, slug, b))
+  // Two lists of steps over the same documents can be subtracted from each other ("more than 0" less "more than 1"),
+  // and no single list protects that difference. One field, one list.
+  for (const [i, b] of bands.entries())
+    if (bands.findIndex((k) => k.collection === b.collection && k.field === b.field) !== i)
+      throw new Error(`stats: band "${b.collection}.${b.field}" is listed twice. Put all of its thresholds in one band.`)
   return {
     users: slug,
     access,
     minimum,
     fields,
-    bands: (options.bands ?? []).map((b) => resolveBand(config, slug, b)),
+    bands,
     path: path as `/${string}`,
     admin: { card: options.admin?.card !== false, view: options.admin?.view !== false },
     now: options.now ?? (() => new Date()),
