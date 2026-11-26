@@ -2,7 +2,7 @@
 
 Stats for Payload: counts of users by role, position and other fields, shown to whoever your access function allows, with no names, emails or IDs, and small groups hidden.
 
-> **Status: first version, unreleased.** 169 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
+> **Status: 0.1.0, the first release.** 175 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. It has not run on a site with real data yet.
 
 ## What it does
 
@@ -45,8 +45,6 @@ Limits, stated plainly:
 - A report on a site with many small groups will be mostly hidden. Roll-ups do not rescue a field with a small row. Lowering `minimum` shows more, and it cannot go below 2.
 
 ## Install
-
-Nothing is published yet. When it is:
 
 ```
 npm install @extantape/payload-plugin-stats
@@ -99,6 +97,8 @@ Then run `payload generate:importmap`, so the admin can find the card and the vi
 **Fields** can be `select`, `radio` or `relationship` fields, at the top level or inside groups, tabs, rows and arrays (`tenants.roles`). `hasMany` works, with the overlap limit above. `groups` are roll-ups for select and radio fields: users holding any of the listed values.
 
 **A relationship field needs its collection listed in `categories`.** A relationship is broken down by the related document's title, up to `maxValues` documents (default 50), and every title shows as a row label even when its count is hidden. The titles are read past access control. A collection with one document per person, such as profiles titled by full name, would put names in the report, and only you know which collections are like that. So nothing is counted by relationship until you name the collection.
+
+An upload collection with no `useAsTitle` is titled by its file names, because Payload makes `filename` its title. A file name like `jane-doe.jpg` is a name. List an upload collection in `categories` only when its file names are categories too, or give it a `useAsTitle` that is.
 
 **Bands** are "more than N", so `1` means two or more. Use `0` for "at least one". Documents whose user has been deleted are left out.
 

@@ -1,0 +1,74 @@
+# Release: pushing a version tag (vX.Y.Z) builds, tests and *stages* the package on npm.
+# Nothing goes public until the npm account that owns the extantape org approves it with 2FA
+# (npmjs.com → your avatar → Staged Packages → Approve, or `npm stage approve <id>`).
+# No token is stored: npm trusted publishing (OIDC) lets only this workflow stage.
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  # Stages only when the package already exists on npm and this version isn't there yet. The first version of a
+  # new package is published by hand (npm can only trust a workflow for a package that exists), so tagging it
+  # marks the commit and stages nothing. A version already on npm is skipped the same way.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      stage: ${{ steps.npm.outputs.stage }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Tag matches package.json
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+      - name: Package and version on npm?
+        id: npm
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if ! npm view "$NAME" name >/dev/null 2>&1; then
+            echo "stage=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME isn't on npm yet; its first version is published by hand (RELEASING.md). Nothing to stage."
+          elif [ "$(npm view "$NAME@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "stage=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VERSION is already on npm; nothing to stage."
+          else
+            echo "stage=true" >> "$GITHUB_OUTPUT"
+          fi
+  stage:
+    needs: check
+    if: needs.check.outputs.stage == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # A real MongoDB for the integration tests. It lives and dies with this job.
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+    env:
+      STATS_TEST_MONGO_URL: mongodb://127.0.0.1:27017/stats-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.15.0
+      - run: npm ci
+      - name: GitHub description matches package.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/${{ github.repository }} -q .description)" = "$(node -p "require('./package.json').description")" \
+            || { echo "::error::GitHub's description differs from package.json: set it with gh repo edit --description from package.json, then re-tag."; exit 1; }
+      - name: Tag matches package.json
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+      # prepublishOnly (typecheck, tests) and prepack (build) run as for npm publish.
+      - name: Stage on npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in *-*) TAG=next ;; *) TAG=latest ;; esac
+          npm stage publish --access public --provenance --tag "$TAG"

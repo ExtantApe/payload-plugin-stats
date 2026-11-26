@@ -74,3 +74,8 @@ Mutation checks. Kept in the suite: the four leaky engines above. Run by hand on
 - Covered: none yet.
 - Gaps added: none.
 - Gaps skipped (and why): none.
+
+## 2026-11-25, release 0.1.0
+
+- Covered, new: `test/mongo-setup.test.ts` (6 tests) proves the test container start-up with a stand-in docker: removal registered before the first start, nothing removed when stopped before a start, a taken port retried and the failed container removed, five taken ports give up, other errors throw at once, and a container that already had the name is never removed.
+- Gaps skipped: the Release workflow itself (it runs only on a tag; the check job's three branches are plain shell and are read by review). Total 175 tests.
