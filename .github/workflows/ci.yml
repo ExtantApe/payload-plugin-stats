@@ -1,0 +1,38 @@
+name: CI
+
+# Build and tests. The leak check has its own workflow and runs on every change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      # A real MongoDB for the integration tests. It lives and dies with this job.
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+    env:
+      STATS_TEST_MONGO_URL: mongodb://127.0.0.1:27017/stats-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
