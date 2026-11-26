@@ -21,6 +21,54 @@ const freePort = () =>
     })
   })
 
+/** Runs one docker command and throws on failure, with Docker's message in `stderr`. */
+export type Docker = (args: string[]) => void
+
+const messageOf = (error: unknown) => String((error as { stderr?: unknown }).stderr ?? error)
+
+/**
+ * Starts the throwaway container `name` on a free port and returns that port and a function that removes it.
+ * Removal is set up before the first start, so a Ctrl-C or a kill while the container is still starting removes it
+ * too. Only a container this run may have created is removed: if Docker says the name is taken by a container that
+ * was already there, nothing is removed. A port taken between picking and binding gets a new port, up to five tries.
+ */
+export async function startContainer(
+  name: string,
+  docker: Docker,
+  pickPort: () => Promise<number>,
+  onExit: (remove: () => void) => void = removeOnExit,
+): Promise<{ port: number; remove: () => void }> {
+  let mayExist = false
+  const remove = () => {
+    if (!mayExist) return
+    mayExist = false
+    try {
+      docker(['rm', '-f', '-v', name])
+    } catch {
+      // already gone
+    }
+  }
+  onExit(remove)
+  for (let tries = 1; ; tries++) {
+    const port = await pickPort()
+    mayExist = true
+    try {
+      docker(['run', '-d', '--rm', '--name', name, '--tmpfs', '/data/db', '-p', `127.0.0.1:${port}:27017`, 'mongo:8'])
+      return { port, remove }
+    } catch (error) {
+      const message = messageOf(error)
+      if (/is already in use by container/i.test(message)) {
+        // Someone else's container has this name. It isn't ours to remove.
+        mayExist = false
+        throw error
+      }
+      // A failed start can leave the container behind, created and never run.
+      remove()
+      if (!/port is already allocated|address already in use/i.test(message) || tries >= 5) throw error
+    }
+  }
+}
+
 /**
  * A real MongoDB for the integration tests. With STATS_TEST_MONGO_URL set (CI's service container) it uses that.
  * Otherwise it starts its own throwaway container on a free local port, keeps the data in memory, and removes that
@@ -33,38 +81,14 @@ export default async function setup(project: TestProject) {
     return
   }
   const name = `payload-plugin-stats-test-${process.pid}-${Date.now()}`
-  const drop = () => {
-    try {
-      execFileSync('docker', ['rm', '-f', '-v', name], { stdio: 'pipe' })
-    } catch {
-      // already gone
-    }
+  const docker: Docker = (args) => {
+    execFileSync('docker', args, { stdio: 'pipe' })
   }
-  // The port is free when picked, and something else can take it before Docker binds it. Then pick another.
-  let port = 0
-  for (let tries = 1; ; tries++) {
-    port = await freePort()
-    try {
-      execFileSync('docker', ['run', '-d', '--rm', '--name', name, '--tmpfs', '/data/db', '-p', `127.0.0.1:${port}:27017`, 'mongo:8'], { stdio: 'pipe' })
-      break
-    } catch (error) {
-      // A failed start can leave the container behind, created and never run.
-      drop()
-      const taken = /port is already allocated|address already in use/i.test(String((error as { stderr?: unknown }).stderr ?? error))
-      if (!taken || tries >= 5) throw error
-    }
-  }
-  let removed = false
-  const remove = () => {
-    if (removed) return
-    removed = true
-    drop()
-  }
-  removeOnExit(remove)
+  const { port, remove } = await startContainer(name, docker, freePort)
   try {
     for (let tries = 0; ; tries++) {
       try {
-        execFileSync('docker', ['exec', name, 'mongosh', '--quiet', '--eval', 'db.runCommand({ ping: 1 }).ok'], { stdio: 'pipe' })
+        docker(['exec', name, 'mongosh', '--quiet', '--eval', 'db.runCommand({ ping: 1 }).ok'])
         break
       } catch (error) {
         if (tries > 60) throw error
