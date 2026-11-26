@@ -10,6 +10,8 @@ const DAY = 86_400_000
  * inside the database and returns a single row of totals. No user document, name, email or ID is ever loaded.
  */
 export async function buildReport(payload: Payload, opts: ResolvedStatsOptions): Promise<StatsReport> {
+  // Fails closed: no count is read until the check against the final config has passed.
+  if (opts.final && !opts.final.ok) throw new Error(`stats: turned off. ${opts.final.why}`)
   const users = opts.users as never
   const count = async (where?: Where) => (await payload.count({ collection: users, overrideAccess: true, ...(where ? { where } : {}) })).totalDocs
 

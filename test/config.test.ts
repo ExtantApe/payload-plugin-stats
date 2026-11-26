@@ -2,7 +2,7 @@ import type { CollectionConfig, Config } from 'payload'
 import { describe, expect, it } from 'vitest'
 
 import { resolveOptions } from '../src/config.js'
-import { stats, type StatsAccess, type StatsOptions } from '../src/index.js'
+import { buildReport, optionsOf, stats, type StatsAccess, type StatsOptions } from '../src/index.js'
 
 const isAdmin = ({ req }: { req: { user?: unknown } }) => (req.user as { roles?: string[] } | null)?.roles?.includes('admin') === true
 
@@ -31,7 +31,14 @@ const users = (extra: Partial<CollectionConfig> = {}): CollectionConfig => ({
     { name: 'school', type: 'select', options: ['primary', 'secondary'], hooks: { afterRead: [() => undefined] } },
     { name: 'household', type: 'array', hooks: { afterRead: [() => []] }, fields: [{ name: 'size', type: 'select', options: ['small', 'large'] }] },
     { name: 'region', type: 'select', options: ['north', 'south'], hooks: { afterRead: [], beforeChange: [({ value }) => value] } },
+    // Virtual fields: one that reads through a relationship, and a plain one with no hook.
+    { name: 'minorViaRead', type: 'select', options: ['yes', 'no'], virtual: 'profile.isMinorRead' },
+    { name: 'linked', type: 'group', virtual: 'profile.details', fields: [{ name: 'level', type: 'select', options: ['one', 'two'] }] } as never,
+    { name: 'computed', type: 'select', options: ['a', 'b'], virtual: true },
+    // Payload treats any truthy `hidden` as hidden.
+    { name: 'flagged', type: 'select', options: ['a', 'b'], hidden: 1 as never },
     { name: 'crew', type: 'relationship', relationTo: 'crews' },
+    { name: 'rank', type: 'relationship', relationTo: 'ranks' },
     { name: 'team', type: 'relationship', relationTo: 'teams' },
     { name: 'tenants', type: 'array', fields: [{ type: 'row', fields: [{ name: 'roles', type: 'select', options: ['owner', 'viewer'] }] }] },
     { type: 'tabs', tabs: [{ label: 'More', fields: [{ name: 'details', type: 'group', fields: [{ name: 'level', type: 'select', options: ['one', 'two'] }] }] }] },
@@ -48,6 +55,10 @@ const config = (u = users()): Config =>
       { slug: 'teams', admin: { useAsTitle: 'name' }, fields: [{ name: 'name', type: 'text', access: { read: () => false } }] },
       { slug: 'crews', admin: { useAsTitle: 'name' }, fields: [{ name: 'name', type: 'text', hidden: true }] },
       { slug: 'members', auth: true, fields: [] },
+      // Collections with collection-level read hooks.
+      { slug: 'logs', hooks: { afterRead: [({ doc }) => doc] }, fields: [{ name: 'by', type: 'relationship', relationTo: 'users' }] },
+      { slug: 'drafts', hooks: { beforeRead: [({ doc }) => doc] }, fields: [{ name: 'by', type: 'relationship', relationTo: 'users' }] },
+      { slug: 'ranks', admin: { useAsTitle: 'title' }, hooks: { afterRead: [({ doc }) => doc] }, fields: [{ name: 'title', type: 'text' }] },
       {
         slug: 'posts',
         fields: [
@@ -57,6 +68,7 @@ const config = (u = users()): Config =>
           { name: 'editor', type: 'relationship', relationTo: 'users', access: { read: () => false } },
           { name: 'ghost', type: 'relationship', relationTo: 'users', hidden: true },
           { name: 'reader', type: 'relationship', relationTo: 'users', hooks: { afterRead: [() => null] } },
+          { name: 'proxy', type: 'relationship', relationTo: 'users', virtual: 'home.lead' },
           { name: 'visits', type: 'array', fields: [{ name: 'by', type: 'relationship', relationTo: 'users' }] },
         ],
       },
@@ -96,6 +108,20 @@ describe('options', () => {
 
   it('counts a field whose hooks do not touch reading', () => {
     expect(resolve({ fields: ['region'] }).fields[0]).toMatchObject({ path: 'region', kind: 'options' })
+  })
+
+  it('counts a virtual field that is plain (virtual: true, no hook)', () => {
+    expect(resolve({ fields: ['computed'] }).fields[0]).toMatchObject({ path: 'computed', kind: 'options' })
+  })
+
+  it('takes collections with read hooks once the site names them, and category collections either way', () => {
+    const hooked = config(users({ hooks: { afterRead: [({ doc }) => doc], beforeRead: [({ doc }) => doc] } }))
+    const o = resolve({ allowCollectionReadHooks: ['users', 'logs', 'drafts'], bands: [{ collection: 'logs', field: 'by' }, { collection: 'drafts', field: 'by' }] }, hooked)
+    expect(o.bands.map((b) => b.collection)).toEqual(['logs', 'drafts'])
+    // Hooks that are not about reading need no opt-in.
+    expect(resolve({}, config(users({ hooks: { afterRead: [], beforeChange: [({ data }) => data] } }))).users).toBe('users')
+    // Category titles are read with payload.find, which runs the collection's read hooks, so nothing is bypassed.
+    expect(resolve({ categories: ['ranks'], fields: ['rank'] }).fields[0]).toMatchObject({ relationTo: 'ranks', titleField: 'title' })
   })
 
   it('never uses an ID as a row label', () => {
@@ -144,7 +170,18 @@ describe('options', () => {
     ['a field inside an array with read access', () => resolve({ fields: ['memberships.role'] }), /"memberships" has its own read access/],
     ['a relationship whose title field has read access', () => resolve({ categories: ['teams'], fields: ['team'] }), /"teams.name" has its own read access/],
     ['a band field with read access', () => resolve({ bands: [{ collection: 'posts', field: 'editor' }] }), /"editor" has its own read access/],
-    ['a hidden field (the review found an isMinor field counted as yes 6, no 24)', () => resolve({ fields: ['isMinor'] }), /"isMinor" is hidden \(hidden: true\)\. A count would show what that hides/],
+    ['a hidden field (the review found an isMinor field counted as yes 6, no 24)', () => resolve({ fields: ['isMinor'] }), /"isMinor" is hidden \(hidden is set\)\. A count would show what that hides/],
+    ['a field whose hidden is truthy but not true', () => resolve({ fields: ['flagged'] }), /"flagged" is hidden/],
+    ['a virtual field that reads through a relationship (the review found one counted as yes 3, no 7)', () => resolve({ fields: ['minorViaRead'] }), /"minorViaRead" is virtual and takes its value from "profile.isMinorRead"/],
+    ['a field inside a group that is virtual through a relationship', () => resolve({ fields: ['linked.level'] }), /"linked" is virtual/],
+    ['a band field that is virtual through a relationship', () => resolve({ bands: [{ collection: 'posts', field: 'proxy' }] }), /"proxy" is virtual/],
+    ['a users collection with a collection-level afterRead hook', () => resolve({}, config(users({ hooks: { afterRead: [({ doc }) => doc] } }))), /users collection "users" has a collection-level afterRead hook.*allowCollectionReadHooks/],
+    ['a users collection with a collection-level beforeRead hook', () => resolve({}, config(users({ hooks: { beforeRead: [({ doc }) => doc] } }))), /collection-level beforeRead hook/],
+    ['a band collection with a collection-level afterRead hook', () => resolve({ bands: [{ collection: 'logs', field: 'by' }] }), /band collection "logs" has a collection-level afterRead hook/],
+    ['a band collection with a collection-level beforeRead hook', () => resolve({ bands: [{ collection: 'drafts', field: 'by' }] }), /band collection "drafts" has a collection-level beforeRead hook/],
+    ['a read hook allowed on another collection only', () => resolve({ allowCollectionReadHooks: ['logs'], bands: [{ collection: 'drafts', field: 'by' }] }), /band collection "drafts"/],
+    ['allowCollectionReadHooks that is not a list of slugs', () => resolve({ allowCollectionReadHooks: 'users' as never }), /allowCollectionReadHooks must be a list/],
+    ['allowCollectionReadHooks naming a collection that is missing', () => resolve({ allowCollectionReadHooks: ['zoo'] }), /allowCollectionReadHooks: no collection "zoo"/],
     ['a field inside a hidden group', () => resolve({ fields: ['guardian.consent'] }), /"guardian" is hidden/],
     ['a field with an afterRead hook', () => resolve({ fields: ['school'] }), /"school" has an afterRead hook/],
     ['a field inside an array with an afterRead hook', () => resolve({ fields: ['household.size'] }), /"household" has an afterRead hook/],
@@ -174,6 +211,47 @@ describe('options', () => {
     expect(after.admin!.components!.beforeDashboard).toEqual(['x#Y', '@extantape/payload-plugin-stats/admin#StatsCard'])
     expect(after.admin!.components!.views).toMatchObject({ other: { path: '/other' }, stats: { Component: '@extantape/payload-plugin-stats/admin#StatsView', path: '/numbers' } })
     expect(after.collections).toBe(before.collections) // no collection added or changed
+  })
+
+  describe('the second check, when Payload has started', () => {
+    const logged: string[] = []
+    const started = (c: Config) => ({ config: c, logger: { error: (m: string) => logged.push(m) } }) as never
+    const ask = async (c: Config) => {
+      const res = await c.endpoints![0]!.handler({ user: { roles: ['admin'] }, payload: { config: c, logger: { error: () => undefined } } } as never)
+      return [res.status, ((await res.json()) as { error?: string }).error]
+    }
+
+    it('counts nothing until it has run', async () => {
+      const after = stats({ access: isAdmin as StatsAccess, fields: ['kind'] })(config()) as Config
+      expect(optionsOf(after).final).toMatchObject({ ok: false, why: expect.stringMatching(/has not run yet/) })
+      expect(await ask(after)).toEqual([503, expect.stringMatching(/turned off/)])
+      await expect(buildReport({} as never, optionsOf(after))).rejects.toThrow(/turned off/)
+    })
+
+    it('runs the site\'s own onInit first, then passes a config nobody changed', async () => {
+      const order: string[] = []
+      const after = stats({ access: isAdmin as StatsAccess, fields: ['kind'] })({ ...config(), onInit: () => void order.push('site') }) as Config
+      await after.onInit!(started(after))
+      expect(order).toEqual(['site'])
+      expect(optionsOf(after).final).toEqual({ ok: true, why: '' })
+    })
+
+    it('turns the stats off, and logs why, when a later plugin hid a counted field or added a read hook', async () => {
+      for (const [change, why] of [
+        [(u: CollectionConfig) => ((u.fields.find((f) => 'name' in f && f.name === 'kind') as { hidden?: boolean }).hidden = true), /"kind" is hidden/],
+        [(u: CollectionConfig) => (u.hooks = { afterRead: [({ doc }) => doc] }), /collection-level afterRead hook/],
+      ] as const) {
+        logged.length = 0
+        const after = stats({ access: isAdmin as StatsAccess, fields: ['kind'] })(config()) as Config
+        change(after.collections![0]!)
+        await after.onInit!(started(after))
+        expect(optionsOf(after).final).toMatchObject({ ok: false, why: expect.stringMatching(why) })
+        expect(logged).toEqual([expect.stringMatching(/^stats: turned off\..*no longer passes/)])
+        expect(logged[0]).toMatch(why)
+        // The answer names no field: the reason stays in the log.
+        expect(await ask(after)).toEqual([503, 'The stats are turned off, because a start-up check of the site configuration did not pass. The server log says why.'])
+      }
+    })
   })
 
   it('leaves the card and the view out when asked', () => {

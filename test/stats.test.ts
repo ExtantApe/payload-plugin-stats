@@ -356,7 +356,59 @@ describe('the admin card and view', () => {
   })
 })
 
+describe('a plugin listed after stats', () => {
+  // A real second Payload, on its own database, where a later plugin hides a field stats was asked to count.
+  let late: Payload
+  const lines: string[] = []
+  beforeAll(async () => {
+    const config = await buildConfig({
+      secret: 'test-secret-not-for-production',
+      telemetry: false,
+      typescript: { autoGenerate: false },
+      logger: { options: { level: 'error' }, destination: { write: (line: string) => void lines.push(line) } },
+      db: mongooseAdapter({ url: `${inject('mongoUrl')}-late`, transactionOptions: false }),
+      collections: [{ slug: 'users', auth: true, fields: [{ name: 'isMinor', type: 'select', options: ['yes', 'no'] }] }],
+      plugins: [
+        stats({ access: () => true, fields: ['isMinor'] }),
+        (c) => {
+          const field = c.collections!.find((k) => k.slug === 'users')!.fields.find((f) => 'name' in f && f.name === 'isMinor')!
+          ;(field as { hidden?: boolean }).hidden = true
+          return c
+        },
+      ],
+    })
+    late = await getPayload({ config, key: 'stats-late-plugin' })
+    for (let n = 0; n < 8; n++) await late.create({ collection: 'users' as never, data: { email: `late${n}@example.test`, password: PW, isMinor: n < 6 ? 'yes' : 'no' } as never })
+  })
+  afterAll(async () => {
+    await late?.db.connection.dropDatabase()
+    await late?.destroy()
+  })
+
+  it('is caught when Payload starts: the start-up log says why, and nothing is counted', async () => {
+    expect(optionsOf(late.config).final).toMatchObject({ ok: false, why: expect.stringMatching(/"isMinor" is hidden/) })
+    expect(lines.join('')).toMatch(/stats: turned off\..*\\"isMinor\\" is hidden/)
+    const user = (await late.find({ collection: 'users' as never, limit: 1, overrideAccess: true })).docs[0] as never
+    const req = (await createLocalReq({ user }, late)) as PayloadRequest
+    const count = vi.spyOn(late, 'count')
+    const res = await (late.config.endpoints as Endpoint[]).find((e) => e.path === '/stats')!.handler(req)
+    expect(res.status).toBe(503)
+    const text = await res.text()
+    expect(text).toContain('turned off')
+    expect(text).not.toMatch(/isMinor|yes|"value"/)
+    expect(renderToStaticMarkup(await StatsViewBody({ req }))).toContain('turned off')
+    expect(renderToStaticMarkup((await StatsCardBody({ req }))!)).toContain('could not be counted')
+    await expect(buildReport(late, optionsOf(late.config))).rejects.toThrow(/turned off/)
+    expect(count).not.toHaveBeenCalled()
+    count.mockRestore()
+  })
+})
+
 describe('edges', () => {
+  it('passes the second check on the real, started config', () => {
+    expect(optionsOf(payload.config).final).toEqual({ ok: true, why: '' })
+  })
+
   it('will not break a relationship down into more values than allowed', async () => {
     const opts = optionsOf(payload.config)
     const r = await buildReport(payload, { ...opts, fields: opts.fields.map((f) => ({ ...f, maxValues: 2 })) })

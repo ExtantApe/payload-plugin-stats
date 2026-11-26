@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 
 import { allowed } from '../access.js'
 import { optionsOf } from '../config.js'
+import { TURNED_OFF } from '../endpoint.js'
 import { buildReport } from '../report.js'
 import type { StatsCount, StatsReport } from '../types.js'
 
@@ -109,6 +110,7 @@ export function StatsReportTables({ report }: { report: StatsReport }) {
 export async function StatsViewBody({ req }: { req: PayloadRequest }) {
   const opts = optionsOf(req.payload.config)
   if (!(await allowed(opts, req))) return <p>You are not allowed to see these stats.</p>
+  if (opts.final && !opts.final.ok) return <p role="alert">{TURNED_OFF}</p>
   let report: StatsReport
   try {
     report = await buildReport(req.payload, opts)

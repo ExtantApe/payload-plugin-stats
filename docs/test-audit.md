@@ -2,6 +2,18 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-25: after the third review
+
+- **Virtual fields that read through a relationship are refused:** `test/config.test.ts`, three refusals (the field, a group on the path, a band field). A plain `virtual: true` field is accepted.
+- **Any truthy `hidden` is refused:** `config.test.ts`, `hidden: 1`.
+- **Collection-level read hooks need an opt-in:** `config.test.ts`, seven refusals (afterRead and beforeRead on users and on a band collection, an opt-in for a different collection, two bad values of the option), and one test that the opt-in works, that hooks about writing need none, and that a category collection with a hook is accepted.
+- **The second check:** `config.test.ts` with a stand-in for the started Payload: nothing is counted before it runs, the site's own `onInit` runs first, and a later change (a hidden field, a new read hook) turns the stats off with the reason logged and a 503 that names no field. `test/stats.test.ts` on a real second Payload and database, with a later plugin that hides `isMinor`: the reason is in the real start-up log, the endpoint answers 503, the view and the card show no numbers, and `payload.count` is never called. The main suite's site passes the second check on its real sanitized config.
+
+Gaps skipped, and why:
+
+- A later plugin adding a collection read hook, on a real Payload: the stand-in covers it, and the real test covers the same path with a hidden field.
+- What a three-value field with a roll-up gives away beyond the overlap. The README states it in words (bounds, never an exact number), as the review described it. No test measures those bounds.
+
 ## 2026-11-25: after the second review
 
 What changed, and the tests that hold it:
@@ -10,7 +22,7 @@ What changed, and the tests that hold it:
 - **Two bands on one field are refused:** `config.test.ts`, with different thresholds and with the same. `suppress.test.ts` shows why: the reader finds the leak on that shape, with the review's numbers.
 - **A zero reads 0:** `suppress.test.ts` "shows a zero in a table that shows as 0", and `stats.test.ts` against the real database. No response holds "fewer than".
 - **The readers are independent of the layout:** `test/exhaustive.ts` and `test/attacker.ts` take a shape as kinds of user, the counts those users give, and the groups to protect. The page comes from `present`, the one function everything published passes through. Eight shapes pass at minimums 2, 3 and 5: the six from before, a many-value field with two values, and two fields shown together. For one-value fields, ladders and bands, the protected groups are every group made of a table's parts. For many-value fields they are each row, each roll-up, any, none, and the users with some value (or some value of a roll-up) who lack one.
-- **Accepted limits are pinned:** the overlap in a two-value field is recoverable (the review's 10, 8, 2 and 10), it and its sum with "none" are the only groups of that field a page narrows, and a group spanning two fields can be narrowed.
+- **Accepted limits are pinned:** the overlap in a two-value field is recoverable (the review's 10, 8, 2 and 10), what a page narrows is the overlap and what follows from it (in a two-value field, its sum with "none"), and a group spanning two fields can be narrowed.
 
 Mutation checks, run by hand in this pass and then restored: with the roll-up member remainders taken out of `layout`, 4 tests fail (both readers, on the many-value shape with a roll-up). With the "any but this value" remainders taken out, 10 fail. Kept in the suite: the three leaky engines, the "fewer than" page, and two bands on one field.
 

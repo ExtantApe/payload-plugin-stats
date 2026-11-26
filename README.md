@@ -2,7 +2,7 @@
 
 Stats for Payload: counts of users by role, position and other fields, shown to whoever your access function allows, with no names, emails or IDs, and small groups hidden.
 
-> **Status: first version, unreleased.** 149 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
+> **Status: first version, unreleased.** 167 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
 
 ## What it does
 
@@ -36,7 +36,7 @@ A hidden count says nothing about its own size. It may be small or large.
 Limits, stated plainly:
 
 - A reader can sometimes work out that a hidden count is zero, or that it is at least 1.
-- **A field where a user can hold several values shows how many users hold two of them at once.** Add two rows and subtract "any of these", or a roll-up of those two values, and what is left is the users who hold both. With 12 admins, 10 editors and 20 users holding either role, 2 hold both. That number can be from 1 to 4, and the plugin does not hide it. This is by the owner's choice: how many people hold more than one role is fine to show. It applies to `hasMany` fields and to fields inside arrays. If that overlap is sensitive on your site, leave the field out. Every other group in such a field is still protected: each row, each roll-up, and the users with some value who lack one particular value.
+- **A field where a user can hold several values shows how many users hold two of them at once.** Add two rows and subtract "any of these", or a roll-up of those two values, and what is left is the users who hold both. With 12 admins, 10 editors and 20 users holding either role, 2 hold both. That number can be from 1 to 4, and the plugin does not hide it. This is by the owner's choice: how many people hold more than one role is fine to show. It applies to `hasMany` fields and to fields inside arrays. What a reader gets is the overlap and what follows from it. In a field with three values and a roll-up, for example, the number of users holding at most one value can be bounded, though never pinned to one number. If that is sensitive on your site, leave the field out. Each row, each roll-up, and the users with some value who lack one particular value are still protected.
 - **The total is the whole users collection**, counted past access control, and it is always shown. Your `access` function must let in only people who are allowed to know that number. This matters most on a site with several tenants, where a tenant's admin may see only their own users in the admin panel. Every other count is taken the same way, across all users.
 - **Collection-level read access is not applied** to the collections named in `categories` or in `bands`. Category titles are read, and documents are counted, past those rules. Field-level rules are different: a field kept from readers is refused, as listed below.
 - **Two tables side by side can narrow a group that spans both.** Each table is protected on its own. With 8 users, 5 of them editors and 5 of them in one position, at least 2 editors hold that position. The plugin does not check groups made by combining two fields, a field with a band, or either with the new-account counts.
@@ -85,6 +85,7 @@ Then run `payload generate:importmap`, so the admin can find the card and the vi
 | `users` | `'users'` | The auth collection to count. |
 | `access` | none, **required** | Who may see the stats: `({ req }) => boolean`. Only an exact `true` allows. Anything else, or a throw, refuses. |
 | `categories` | `[]` | Collection slugs whose document titles are categories, such as `['positions']`. A relationship field can be counted only when it points at one of these. |
+| `allowCollectionReadHooks` | `[]` | Slugs of the users collection or of band collections that have a collection-level `afterRead` or `beforeRead` hook you have checked. See below. |
 | `minimum` | `5` | Counts from 1 to one under this never show. A whole number, 2 or more. |
 | `fields` | `[]` | Fields on the users collection to count by. A path, or `{ path, label, groups, maxValues }`. |
 | `bands` | `[]` | `{ collection, field, thresholds, label }`: users with more than N documents in `collection`, where `field` is a relationship to the users collection. One band per field. |
@@ -106,15 +107,21 @@ The plugin checks all of this when Payload starts and stops the boot on a mistak
 - a missing `access`, or one that is not a function;
 - a relationship field whose collection is not in `categories`;
 - a relationship that points at an auth collection, listed or not, because a breakdown by person is a list of people;
-- a counted field, a band field, or any group, array or tab on the path to one, that the site keeps from readers in one of three ways: its own `access.read`, `hidden: true`, or an `afterRead` hook, which can strip or change the value. A count would show what those hide. The same goes for the title field of a `categories` collection;
+- a counted field, a band field, or any group, array or tab on the path to one, that the site keeps from readers: its own `access.read`, a truthy `hidden`, or an `afterRead` hook, which can strip or change the value. A count would show what those hide. The same goes for the title field of a `categories` collection;
+- a field, or a group on the path to one, whose `virtual` is a path such as `'profile.isMinor'`. It takes its value through a relationship from another field, which may itself be kept from readers. A plain `virtual: true` field with no hook is accepted;
+- a users collection or a band collection with a collection-level `afterRead` or `beforeRead` hook, unless its slug is in `allowCollectionReadHooks`;
 - two bands on the same collection and field. One list of steps less the other would show a group neither list protects, so put all the thresholds in one band;
 - free-text fields, localized fields, relationships to several collections, and band fields inside arrays.
+
+**Collection-level read hooks need an opt-in.** A collection's own `afterRead` or `beforeRead` hook can strip or change documents for readers, and a count reads past it. The plugin cannot tell what a hook does, so it refuses a users collection or a band collection that has one until you list the slug: `allowCollectionReadHooks: ['users']`. Listing it says you have checked that the hook hides nothing about the fields counted here. Collections in `categories` need no opt-in, because their titles are read with `payload.find`, which runs those hooks.
+
+**The checks run twice.** Once when the plugin is set up, and again when Payload has started, against the config it actually runs. A plugin listed after this one can hide a field or add a hook, and the first check cannot see that. If the second check fails, Payload still starts, the reason is logged as an error at start-up, and the endpoint answers 503 without counting anything. The view and the card show no numbers either. The same happens if `onInit` never runs, for example with `disableOnInit`.
 
 Count only by fields whose values are categories. A select option or a related document's title appears in the report as a row label.
 
 ## The endpoint
 
-`GET /api/stats`, signed in as someone the `access` function allows. Logged out gets 401. Anyone else gets 403. Responses are never cached.
+`GET /api/stats`, signed in as someone the `access` function allows. Logged out gets 401. Anyone else gets 403. If the second start-up check did not pass, everyone gets 503. Responses are never cached.
 
 ```json
 {
@@ -161,7 +168,7 @@ npm install
 npm test
 ```
 
-The tests start their own MongoDB in a throwaway Docker container on a free local port, keep its data in memory, and remove that container when the run ends, including when the run is stopped with Ctrl-C or killed. Set `STATS_TEST_MONGO_URL` to use a MongoDB you already have; the tests drop the database named in that URL.
+The tests start their own MongoDB in a throwaway Docker container on a free local port, keep its data in memory, and remove that container when the run ends, including when the run is stopped with Ctrl-C or killed. Set `STATS_TEST_MONGO_URL` to use a MongoDB you already have; the tests drop the database named in that URL, and a second one with `-late` added to its name.
 
 ## License
 

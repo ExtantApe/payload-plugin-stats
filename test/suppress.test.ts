@@ -198,7 +198,7 @@ describe('accepted limits, pinned so a change to either one shows up here', () =
     expect(narrowed({ ...shapes.twoValue, secrets: [both] }, [10, 10, 8, 2], 5)).toEqual(['both values (really 2) cannot be 1'])
   })
 
-  it('and that overlap is all it gives away: every other group a reader could name stays protected', () => {
+  it('and gives away the overlap and what follows from it, with no other group of a two-value field narrowed', () => {
     // At minimum 2 the only small size is 1, so there is no smaller range to narrow to and the check has nothing to find.
     for (const minimum of [3, 5]) {
       const found = leaks(shapes.twoValue, minimum, 24, undefined, everyGroup).leaks

@@ -1,6 +1,6 @@
-import type { Config, Plugin } from 'payload'
+import type { Config, Payload, Plugin } from 'payload'
 
-import { CUSTOM_KEY, resolveOptions } from './config.js'
+import { CUSTOM_KEY, optionsOf, resolveOptions } from './config.js'
 import { statsEndpoint } from './endpoint.js'
 import type { StatsOptions } from './types.js'
 
@@ -24,6 +24,10 @@ export const stats =
     const opts = resolveOptions(config, options)
     if ((config.endpoints ?? []).some((e) => e.path === opts.path && e.method === 'get')) throw new Error(`stats: an endpoint GET ${opts.path} already exists.`)
     const components = config.admin?.components
+    // A plugin listed after this one can still change a field or a collection (set hidden, add a hook). So the same
+    // checks run again when Payload has started, against the config it actually runs. Nothing is counted before.
+    opts.final = { ok: false, why: 'The check against the final config has not run yet (Payload has not finished starting, or onInit was skipped).' }
+    const earlier = config.onInit
     return {
       ...config,
       endpoints: [...(config.endpoints ?? []), statsEndpoint(opts.path)],
@@ -36,5 +40,18 @@ export const stats =
         },
       },
       custom: { ...config.custom, [CUSTOM_KEY]: opts },
+      onInit: async (payload: Payload) => {
+        await earlier?.(payload)
+        // Whatever options object the running config holds is the one the endpoint and the admin read.
+        const live = optionsOf(payload.config)
+        try {
+          resolveOptions(payload.config as unknown as Config, options)
+          live.final = { ok: true, why: '' }
+        } catch (error) {
+          const why = error instanceof Error ? error.message : String(error)
+          live.final = { ok: false, why }
+          payload.logger.error(`stats: turned off. The config changed after the plugin first checked it (a plugin listed later?), and it no longer passes: ${why}`)
+        }
+      },
     }
   }

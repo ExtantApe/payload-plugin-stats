@@ -39,6 +39,11 @@ export interface StatsOptions {
    * counted only when it points at one of these, because each title shows in the report as a row label.
    */
   categories?: string[]
+  /**
+   * Collections (the users collection, or a band's collection) whose collection-level afterRead or beforeRead hooks
+   * you have checked: a count reads past them. Without its slug here, a collection with such a hook is refused.
+   */
+  allowCollectionReadHooks?: string[]
   /** Counts under this are never shown. Default 5; at least 2. */
   minimum?: number
   fields?: (StatsFieldOption | string)[]
@@ -81,6 +86,12 @@ export interface ResolvedStatsOptions {
   path: `/${string}`
   admin: { card: boolean; view: boolean }
   now: () => Date
+  /**
+   * Set by the plugin. The options are checked a second time when Payload has started, against the final config,
+   * because a plugin listed later can change a field after the first check. Until that check passes, nothing is
+   * counted. Left out when the options were resolved by hand, outside the plugin.
+   */
+  final?: { ok: boolean; why: string }
 }
 
 /** One number in a report. `value` is null when hidden; `text` is always safe to show. */

@@ -46,3 +46,13 @@ Dated decisions for this repo, newest last.
   - **Not refused:** `admin.hidden` and `admin.condition` (they hide a field in the admin form only, and the API still returns it), and collection-level `afterRead` hooks.
   - **The counts stay separate queries.** One session or transaction for all of them needs a replica set on MongoDB and is not simple, so the README states it as a limit.
   - **`"hidden": "small"` is gone from the JSON.** A count is a number or `"hidden": "protected"`.
+- **Head of Tools, 2026-11-25**, third review. Kept: `admin.hidden` and `admin.condition` are not refused; `layout()` returns no lines; a zero reads 0. Changed:
+  - **A field whose `virtual` is a path is refused**, on the users collection and on band collections, with every group on the way. It reads through a relationship and got past every other refusal: a `minorViaRead` field with `virtual: 'profile.isMinorRead'` was counted as yes 3, no 7. `virtual: true` with no hook stays.
+  - **The checks run again in `onInit`, against the final config.** A plugin listed after stats can set `hidden` on a counted field. If the second check fails, the start-up log says why and the endpoint fails closed.
+  - **Collection-level `afterRead` and `beforeRead` hooks on the users collection and on band collections are refused** unless the site opts in by slug with `allowCollectionReadHooks`. Category collections are unaffected: titles go through `payload.find`.
+  - **Any truthy `hidden` is refused**, as Payload treats it.
+  - **The overlap limit is worded as "the overlap and what follows from it".** In a three-value field with a roll-up, groups holding at most one value can be bounded, though never pinned exactly.
+- 2026-11-25 (builder's choices in carrying those out, open to review):
+  - **Fail closed means 503 and no count.** `buildReport` throws, so the card and the view show no numbers either. The 503 text names no field; the reason is only in the log.
+  - **Nothing is counted until the second check has passed.** If `onInit` never runs (`disableOnInit`, or a later plugin that replaces `onInit` without calling the one before it), the stats stay off.
+  - **Payload still starts when the second check fails.** Stopping the boot from `onInit` would take the whole site down for a stats problem.

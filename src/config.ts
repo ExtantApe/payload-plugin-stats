@@ -22,17 +22,34 @@ function named(fields: Field[]): Field[] {
 }
 
 /**
- * Three ways a site keeps a field's values from readers: its own read rule, `hidden: true`, and an afterRead hook that
- * can strip or change the value. A count reads past all three and would show what they hide, so each is refused.
+ * The ways a field's values are kept from readers, or are not the field's own: its own read rule, `hidden`, an
+ * afterRead hook that can strip or change the value, and a `virtual` path that reads the value through a
+ * relationship from another field, which may itself be kept from readers. A count reads past all of them and would
+ * show what they hide, so each is refused.
  */
 function refuseKeptFromReaders(field: Field, what: string, path: string, part: string): void {
-  const f = field as { access?: { read?: unknown }; hidden?: unknown; hooks?: { afterRead?: unknown[] } }
+  const f = field as { access?: { read?: unknown }; hidden?: unknown; hooks?: { afterRead?: unknown[] }; virtual?: unknown }
   const refuse = (why: string) => {
     throw new Error(`stats: ${what} "${path}": "${part}" ${why}. A count would show what that hides, so it is refused.`)
   }
   if (f.access && f.access.read !== undefined && f.access.read !== null) refuse('has its own read access')
-  if (f.hidden === true) refuse('is hidden (hidden: true)')
+  // Payload treats any truthy `hidden` as hidden.
+  if (f.hidden) refuse('is hidden (hidden is set)')
   if (f.hooks?.afterRead?.length) refuse('has an afterRead hook, which can strip or change its value for readers')
+  if (typeof f.virtual === 'string') refuse(`is virtual and takes its value from "${f.virtual}", which may be kept from readers`)
+}
+
+/**
+ * A collection-level afterRead or beforeRead hook can strip or change documents for readers, and a count reads past
+ * it. Only the site knows what its hook does, so the collection is refused until the site names it.
+ */
+function refuseReadHooks(collection: CollectionConfig, allowed: string[], what: string): void {
+  const hooks = collection.hooks as { afterRead?: unknown[]; beforeRead?: unknown[] } | undefined
+  const found = (['afterRead', 'beforeRead'] as const).filter((h) => hooks?.[h]?.length)
+  if (found.length && !allowed.includes(collection.slug))
+    throw new Error(
+      `stats: ${what} "${collection.slug}" has a collection-level ${found.join(' and ')} hook, which can strip or change documents for readers. A count reads past it. If that is fine for the fields counted here, list "${collection.slug}" in the allowCollectionReadHooks option.`,
+    )
 }
 
 /**
@@ -88,9 +105,10 @@ function resolveField(config: Config, users: CollectionConfig, categories: strin
   throw new Error(`stats: field "${option.path}" is a ${field.type} field; use a select, radio or relationship field.`)
 }
 
-function resolveBand(config: Config, users: string, raw: NonNullable<StatsOptions['bands']>[number]): ResolvedBand {
+function resolveBand(config: Config, users: string, readHooks: string[], raw: NonNullable<StatsOptions['bands']>[number]): ResolvedBand {
   const collection = (config.collections ?? []).find((c) => c.slug === raw.collection)
   if (!collection) throw new Error(`stats: band: no collection "${raw.collection}".`)
+  refuseReadHooks(collection, readHooks, 'band collection')
   const { field, inArray } = walk(collection, raw.field, 'band field')
   if (field.type !== 'relationship' || field.relationTo !== users) throw new Error(`stats: band field "${raw.collection}.${raw.field}" must be a relationship to "${users}" only.`)
   const hasMany = field.hasMany === true
@@ -116,6 +134,11 @@ export function resolveOptions(config: Config, options: StatsOptions): ResolvedS
   const path = options.path ?? '/stats'
   if (!/^\/[\w-]+(\/[\w-]+)*$/.test(path)) throw new Error('stats: path must look like "/stats".')
 
+  const readHooks = options.allowCollectionReadHooks ?? []
+  if (!Array.isArray(readHooks) || readHooks.some((c) => typeof c !== 'string')) throw new Error('stats: allowCollectionReadHooks must be a list of collection slugs.')
+  for (const c of readHooks) if (!(config.collections ?? []).some((k) => k.slug === c)) throw new Error(`stats: allowCollectionReadHooks: no collection "${c}".`)
+  refuseReadHooks(users, readHooks, 'users collection')
+
   const categories = options.categories ?? []
   if (!Array.isArray(categories) || categories.some((c) => typeof c !== 'string')) throw new Error('stats: categories must be a list of collection slugs.')
   for (const c of categories) {
@@ -127,7 +150,7 @@ export function resolveOptions(config: Config, options: StatsOptions): ResolvedS
   const fields = (options.fields ?? []).map((f) => resolveField(config, users, categories, f))
   const paths = fields.map((f) => f.path)
   if (new Set(paths).size !== paths.length) throw new Error('stats: a field path is listed twice.')
-  const bands = (options.bands ?? []).map((b) => resolveBand(config, slug, b))
+  const bands = (options.bands ?? []).map((b) => resolveBand(config, slug, readHooks, b))
   // Two lists of steps over the same documents can be subtracted from each other ("more than 0" less "more than 1"),
   // and no single list protects that difference. One field, one list.
   for (const [i, b] of bands.entries())
