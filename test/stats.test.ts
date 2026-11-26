@@ -340,7 +340,7 @@ describe('the admin card and view', () => {
   it('shows an admin every table in the view, as real tables with row and column headers', async () => {
     const html = renderToStaticMarkup(await StatsViewBody({ req: await reqAs(email(1)) }))
     expect(html).toContain('<h1')
-    for (const caption of ['Accounts', 'kind: high level', 'Roles: each one (a user with several is counted in each)', 'Positions: each one', 'Tenant roles: high level', 'Posts per user']) expect(html).toContain(`${caption}</caption>`)
+    for (const caption of ['Accounts', 'Kind: high level', 'Roles: each one (a user with several is counted in each)', 'Positions: each one', 'Tenant roles: high level', 'Posts per user']) expect(html).toContain(`${caption}</caption>`)
     expect(html.match(/<table/g)).toHaveLength(10)
     expect(html.match(/scope="col"/g)).toHaveLength(20)
     expect(html).toMatch(/<th scope="row"[^>]*>More than 0<\/th><td[^>]*>24</)
