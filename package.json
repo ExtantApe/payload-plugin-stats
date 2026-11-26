@@ -6,7 +6,40 @@
   "keywords": ["payload", "payload-plugin", "payloadcms", "analytics", "stats", "privacy", "admin-dashboard"],
   "license": "MIT",
   "homepage": "https://github.com/ExtantApe/payload-plugin-stats#readme",
+  "bugs": { "url": "https://github.com/ExtantApe/payload-plugin-stats/issues" },
   "repository": { "type": "git", "url": "git+https://github.com/ExtantApe/payload-plugin-stats.git" },
   "type": "module",
-  "engines": { "node": ">=22" }
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./admin": { "types": "./dist/admin/index.d.ts", "import": "./dist/admin/index.js" }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@payloadcms/next": "^3.80.0",
+    "@payloadcms/ui": "^3.80.0",
+    "payload": "^3.80.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@payloadcms/db-mongodb": "3.92.1",
+    "@payloadcms/next": "3.92.1",
+    "@payloadcms/ui": "3.92.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "graphql": "^16.14.2",
+    "payload": "3.92.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.0",
+    "vitest": "^5.1.0"
+  }
 }
