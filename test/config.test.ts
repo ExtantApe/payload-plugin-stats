@@ -236,6 +236,22 @@ describe('options', () => {
       expect(optionsOf(after).final).toEqual({ ok: true, why: '' })
     })
 
+    it('replaces what the first check resolved with what the final config resolves to', async () => {
+      const after = stats({ access: isAdmin as StatsAccess, categories: ['positions', 'ranks'], fields: ['position'] })(config()) as Config
+      const live = optionsOf(after)
+      expect(live.fields[0]).toMatchObject({ relationTo: 'positions', titleField: 'title' })
+      // A later plugin points the field at another listed category, and changes that collection's title field.
+      ;(after.collections![0]!.fields.find((f) => 'name' in f && f.name === 'position') as { relationTo: string }).relationTo = 'ranks'
+      const ranks = after.collections!.find((c) => c.slug === 'ranks')!
+      ranks.fields.push({ name: 'code', type: 'text' })
+      ranks.admin = { useAsTitle: 'code' }
+      await after.onInit!(started(after))
+      // The same object the endpoint, the view and the card read, now holding the second result.
+      expect(optionsOf(after)).toBe(live)
+      expect(live.final).toEqual({ ok: true, why: '' })
+      expect(live.fields[0]).toMatchObject({ relationTo: 'ranks', titleField: 'code' })
+    })
+
     it('turns the stats off, and logs why, when a later plugin hid a counted field or added a read hook', async () => {
       for (const [change, why] of [
         [(u: CollectionConfig) => ((u.fields.find((f) => 'name' in f && f.name === 'kind') as { hidden?: boolean }).hidden = true), /"kind" is hidden/],

@@ -32,18 +32,33 @@ export default async function setup(project: TestProject) {
     project.provide('mongoUrl', given)
     return
   }
-  const port = await freePort()
   const name = `payload-plugin-stats-test-${process.pid}-${Date.now()}`
-  execFileSync('docker', ['run', '-d', '--rm', '--name', name, '--tmpfs', '/data/db', '-p', `127.0.0.1:${port}:27017`, 'mongo:8'], { stdio: 'pipe' })
-  let removed = false
-  const remove = () => {
-    if (removed) return
-    removed = true
+  const drop = () => {
     try {
       execFileSync('docker', ['rm', '-f', '-v', name], { stdio: 'pipe' })
     } catch {
       // already gone
     }
+  }
+  // The port is free when picked, and something else can take it before Docker binds it. Then pick another.
+  let port = 0
+  for (let tries = 1; ; tries++) {
+    port = await freePort()
+    try {
+      execFileSync('docker', ['run', '-d', '--rm', '--name', name, '--tmpfs', '/data/db', '-p', `127.0.0.1:${port}:27017`, 'mongo:8'], { stdio: 'pipe' })
+      break
+    } catch (error) {
+      // A failed start can leave the container behind, created and never run.
+      drop()
+      const taken = /port is already allocated|address already in use/i.test(String((error as { stderr?: unknown }).stderr ?? error))
+      if (!taken || tries >= 5) throw error
+    }
+  }
+  let removed = false
+  const remove = () => {
+    if (removed) return
+    removed = true
+    drop()
   }
   removeOnExit(remove)
   try {

@@ -56,3 +56,7 @@ Dated decisions for this repo, newest last.
   - **Fail closed means 503 and no count.** `buildReport` throws, so the card and the view show no numbers either. The 503 text names no field; the reason is only in the log.
   - **Nothing is counted until the second check has passed.** If `onInit` never runs (`disableOnInit`, or a later plugin that replaces `onInit` without calling the one before it), the stats stay off.
   - **Payload still starts when the second check fails.** Stopping the boot from `onInit` would take the whole site down for a stats problem.
+- **Head of Tools, 2026-11-25**, fourth review. Ruled: Payload starting with the stats off is fine. Changed:
+  - **Every surface uses the options resolved in `onInit`.** The second check was pass or fail only, and the endpoint, the view, the card and `buildReport` kept the first result. A later plugin that put read access on a category title field and switched `useAsTitle` passed the check while the old titles ("Child Name 0") were still shown. The stored options are now overwritten in place with the second result.
+  - **The README says who gets 503**: someone `access` allows. Signed-out is still 401 and refused is still 403.
+- 2026-11-25 (builder's note on that): default field headings now come from the final config too, where Payload has filled in a label from the field name, so `kind` is headed "Kind". A `label` option still wins.

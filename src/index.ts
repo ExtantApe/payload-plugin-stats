@@ -25,7 +25,8 @@ export const stats =
     if ((config.endpoints ?? []).some((e) => e.path === opts.path && e.method === 'get')) throw new Error(`stats: an endpoint GET ${opts.path} already exists.`)
     const components = config.admin?.components
     // A plugin listed after this one can still change a field or a collection (set hidden, add a hook). So the same
-    // checks run again when Payload has started, against the config it actually runs. Nothing is counted before.
+    // checks run again when Payload has started, against the config it actually runs, and every surface then works
+    // from that second result. Nothing is counted before.
     opts.final = { ok: false, why: 'The check against the final config has not run yet (Payload has not finished starting, or onInit was skipped).' }
     const earlier = config.onInit
     return {
@@ -42,11 +43,12 @@ export const stats =
       custom: { ...config.custom, [CUSTOM_KEY]: opts },
       onInit: async (payload: Payload) => {
         await earlier?.(payload)
-        // Whatever options object the running config holds is the one the endpoint and the admin read.
+        // Whatever options object the running config holds is the one the endpoint, the view and the card read. On a
+        // pass it is overwritten, in place, with what the final config resolves to: which collection a relationship
+        // points at, which field is its title, which values a field has. Nothing from the first check is left to use.
         const live = optionsOf(payload.config)
         try {
-          resolveOptions(payload.config as unknown as Config, options)
-          live.final = { ok: true, why: '' }
+          Object.assign(live, resolveOptions(payload.config as unknown as Config, options), { final: { ok: true, why: '' } })
         } catch (error) {
           const why = error instanceof Error ? error.message : String(error)
           live.final = { ok: false, why }

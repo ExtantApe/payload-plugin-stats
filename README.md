@@ -2,7 +2,7 @@
 
 Stats for Payload: counts of users by role, position and other fields, shown to whoever your access function allows, with no names, emails or IDs, and small groups hidden.
 
-> **Status: first version, unreleased.** 167 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
+> **Status: first version, unreleased.** 169 tests pass against a real Payload 3.92 and a real MongoDB 8: the counts, the hiding rules and every refusal. The dashboard card and the admin view have been rendered to HTML in tests and have **not been opened in a browser inside a running admin yet**. Nothing is on npm, and `package.json` stays private until the first release is planned.
 
 ## What it does
 
@@ -115,13 +115,13 @@ The plugin checks all of this when Payload starts and stops the boot on a mistak
 
 **Collection-level read hooks need an opt-in.** A collection's own `afterRead` or `beforeRead` hook can strip or change documents for readers, and a count reads past it. The plugin cannot tell what a hook does, so it refuses a users collection or a band collection that has one until you list the slug: `allowCollectionReadHooks: ['users']`. Listing it says you have checked that the hook hides nothing about the fields counted here. Collections in `categories` need no opt-in, because their titles are read with `payload.find`, which runs those hooks.
 
-**The checks run twice.** Once when the plugin is set up, and again when Payload has started, against the config it actually runs. A plugin listed after this one can hide a field or add a hook, and the first check cannot see that. If the second check fails, Payload still starts, the reason is logged as an error at start-up, and the endpoint answers 503 without counting anything. The view and the card show no numbers either. The same happens if `onInit` never runs, for example with `disableOnInit`.
+**The checks run twice.** Once when the plugin is set up, and again when Payload has started, against the config it actually runs. A plugin listed after this one can hide a field or add a hook, and the first check cannot see that. When it passes, the endpoint, the view and the card all work from what that second check resolved, so a title field or a relationship that a later plugin changed is the one used. If the second check fails, Payload still starts, the reason is logged as an error at start-up, and the endpoint answers 503 without counting anything. The view and the card show no numbers either. The same happens if `onInit` never runs, for example with `disableOnInit`.
 
 Count only by fields whose values are categories. A select option or a related document's title appears in the report as a row label.
 
 ## The endpoint
 
-`GET /api/stats`, signed in as someone the `access` function allows. Logged out gets 401. Anyone else gets 403. If the second start-up check did not pass, everyone gets 503. Responses are never cached.
+`GET /api/stats`, signed in as someone the `access` function allows. Logged out gets 401. Anyone else gets 403. If the second start-up check did not pass, someone the `access` function allows gets 503; logged out is still 401 and anyone else still 403. Responses are never cached.
 
 ```json
 {

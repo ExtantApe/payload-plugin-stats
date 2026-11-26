@@ -2,6 +2,12 @@
 
 Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
 
+## 2026-11-25: after the fourth review
+
+- **Every surface uses what the second check resolved:** `test/stats.test.ts`, a real third Payload where a later plugin puts read access on a category collection's title field and switches `useAsTitle` to another field. The rows are labeled by the new title field, and the old titles are nowhere in the JSON, the view or the endpoint's text. `test/config.test.ts` with a stand-in: the title field and the related collection in the stored options are the final config's after `onInit`.
+- **Correction to the entry after the second review.** Its line "Accepted limits are pinned" says the overlap and its sum with "none" are the only groups of that field a page narrows. That is what the test asserts for a two-value field, and the line stands as written. The general wording, since the third review, is "the overlap and what follows from it": in a three-value field with a roll-up, more can be bounded.
+- **The test database's port:** `test/mongo-setup.ts` now retries with a new port, up to five times, when Docker cannot bind the one it picked. Not covered by a test: it needs another process to take the port in the gap.
+
 ## 2026-11-25: after the third review
 
 - **Virtual fields that read through a relationship are refused:** `test/config.test.ts`, three refusals (the field, a group on the path, a band field). A plain `virtual: true` field is accepted.
@@ -22,7 +28,7 @@ What changed, and the tests that hold it:
 - **Two bands on one field are refused:** `config.test.ts`, with different thresholds and with the same. `suppress.test.ts` shows why: the reader finds the leak on that shape, with the review's numbers.
 - **A zero reads 0:** `suppress.test.ts` "shows a zero in a table that shows as 0", and `stats.test.ts` against the real database. No response holds "fewer than".
 - **The readers are independent of the layout:** `test/exhaustive.ts` and `test/attacker.ts` take a shape as kinds of user, the counts those users give, and the groups to protect. The page comes from `present`, the one function everything published passes through. Eight shapes pass at minimums 2, 3 and 5: the six from before, a many-value field with two values, and two fields shown together. For one-value fields, ladders and bands, the protected groups are every group made of a table's parts. For many-value fields they are each row, each roll-up, any, none, and the users with some value (or some value of a roll-up) who lack one.
-- **Accepted limits are pinned:** the overlap in a two-value field is recoverable (the review's 10, 8, 2 and 10), what a page narrows is the overlap and what follows from it (in a two-value field, its sum with "none"), and a group spanning two fields can be narrowed.
+- **Accepted limits are pinned:** the overlap in a two-value field is recoverable (the review's 10, 8, 2 and 10), it and its sum with "none" are the only groups of that field a page narrows, and a group spanning two fields can be narrowed.
 
 Mutation checks, run by hand in this pass and then restored: with the roll-up member remainders taken out of `layout`, 4 tests fail (both readers, on the many-value shape with a roll-up). With the "any but this value" remainders taken out, 10 fail. Kept in the suite: the three leaky engines, the "fewer than" page, and two bands on one field.
 

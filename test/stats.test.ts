@@ -404,6 +404,58 @@ describe('a plugin listed after stats', () => {
   })
 })
 
+describe('a later plugin that changes a category collection', () => {
+  // The review's case: a real third Payload where a later plugin puts read access on the title field stats first
+  // resolved (a child's name) and makes another field the title. The second check passes on the new title field.
+  let third: Payload
+  beforeAll(async () => {
+    const config = await buildConfig({
+      secret: 'test-secret-not-for-production',
+      telemetry: false,
+      typescript: { autoGenerate: false },
+      db: mongooseAdapter({ url: `${inject('mongoUrl')}-titles`, transactionOptions: false }),
+      collections: [
+        { slug: 'users', auth: true, fields: [{ name: 'team', type: 'relationship', relationTo: 'teams' }] },
+        { slug: 'teams', admin: { useAsTitle: 'childName' }, fields: [{ name: 'childName', type: 'text' }, { name: 'code', type: 'text' }] },
+      ],
+      plugins: [
+        stats({ access: () => true, categories: ['teams'], minimum: 2, fields: [{ path: 'team', label: 'Teams' }] }),
+        (c) => {
+          const teams = c.collections!.find((k) => k.slug === 'teams')!
+          ;(teams.fields.find((f) => 'name' in f && f.name === 'childName') as { access?: unknown }).access = { read: () => false }
+          teams.admin = { ...teams.admin, useAsTitle: 'code' }
+          return c
+        },
+      ],
+    })
+    third = await getPayload({ config, key: 'stats-late-titles' })
+    await third.db.connection.dropDatabase()
+    for (let t = 0; t < 3; t++) {
+      const team = await third.create({ collection: 'teams' as never, data: { childName: `Child Name ${t}`, code: `T-${t}` } as never })
+      for (let n = 0; n < 3; n++) await third.create({ collection: 'users' as never, data: { email: `t${t}n${n}@example.test`, password: PW, team: team.id } as never })
+    }
+  })
+  afterAll(async () => {
+    await third?.db.connection.dropDatabase()
+    await third?.destroy()
+  })
+
+  it('labels the rows by the title field of the final config, and never shows the one now kept from readers', async () => {
+    const opts = optionsOf(third.config)
+    expect(opts.final).toEqual({ ok: true, why: '' })
+    expect(opts.fields[0]).toMatchObject({ relationTo: 'teams', titleField: 'code' })
+    const user = (await third.find({ collection: 'users' as never, limit: 1, overrideAccess: true })).docs[0] as never
+    const req = (await createLocalReq({ user }, third)) as PayloadRequest
+    const res = await (third.config.endpoints as Endpoint[]).find((e) => e.path === '/stats')!.handler(req)
+    expect(res.status).toBe(200)
+    const text = await res.text()
+    expect(rows((JSON.parse(text) as StatsReport).fields[0]!.values)).toEqual({ 'T-0': '3', 'T-1': '3', 'T-2': '3' })
+    const view = renderToStaticMarkup(await StatsViewBody({ req }))
+    expect(view).toContain('T-1')
+    for (const out of [text, view, JSON.stringify(await buildReport(third, opts))]) expect(out).not.toMatch(/Child Name/)
+  })
+})
+
 describe('edges', () => {
   it('passes the second check on the real, started config', () => {
     expect(optionsOf(payload.config).final).toEqual({ ok: true, why: '' })

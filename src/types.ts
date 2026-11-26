@@ -6,7 +6,7 @@ export interface StatsFieldOption {
    * A relationship field counts only when its collection is listed in the `categories` option.
    */
   path: string
-  /** Heading for this field. Default: the field's own label, or its path. */
+  /** Heading for this field. Default: the field's own label, which Payload fills in from the name (`kind` reads "Kind"). */
   label?: string
   /** High-level roll-ups for select and radio fields: users holding any of the listed values. */
   groups?: { label: string; values: string[] }[]
